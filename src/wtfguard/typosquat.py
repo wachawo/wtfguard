@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# ruff: noqa: RUF001, RUF002, RUF003
 """Typosquat detection — fifth detection axis.
 
 Compare a package name against a curated list of high-traffic PyPI
@@ -30,6 +31,33 @@ logger = logging.getLogger(__name__)
 POPULAR_PATH = Path(__file__).parent / "data" / "popular_pypi.txt"
 DEFAULT_MAX_DISTANCE = 2
 SHORT_NAME_LIMIT = 4
+
+# Unicode homoglyph → ASCII letter (subset of UTR#39 confusables).
+# This catches the textbook Cyrillic/Greek homoglyph attack:
+# `раy.py` (Cyrillic 'а', 'р') vs `pay.py` (Latin).
+UNICODE_HOMOGLYPHS: dict[str, str] = {
+    "а": "a",  # Cyrillic a
+    "е": "e",  # Cyrillic e
+    "о": "o",  # Cyrillic o
+    "р": "p",  # Cyrillic p (looks like Latin p)
+    "с": "c",  # Cyrillic c
+    "у": "y",  # Cyrillic y
+    "х": "x",  # Cyrillic x
+    "һ": "h",  # Cyrillic h with descender
+    "ѕ": "s",  # Cyrillic dze
+    "і": "i",  # Ukrainian i
+    "α": "a",  # Greek alpha
+    "ο": "o",  # Greek omicron
+    "ρ": "p",  # Greek rho
+    "υ": "u",  # Greek upsilon
+    "γ": "y",  # Greek gamma
+    "ι": "i",  # Greek iota
+    "‐": "-",  # Hyphen
+    "‑": "-",  # Non-breaking hyphen
+    "‒": "-",  # Figure dash
+    "–": "-",  # En dash
+    "—": "-",  # Em dash
+}
 
 # Visually-confusable substitutions. Each value is the canonical character
 # the key can be mistaken for. Bidirectional pairs are listed twice for
@@ -86,15 +114,32 @@ def levenshtein(a: str, b: str) -> int:
     return previous[-1]
 
 
+def deunicode(name: str) -> str:
+    """Replace Unicode homoglyphs with their ASCII counterparts.
+
+    Catches the Cyrillic / Greek homoglyph attack — e.g. a package named
+    with Cyrillic 'а' that looks identical to Latin 'a' in the terminal.
+    Applied before Levenshtein so the visual lookalike collapses to its
+    intended ASCII spelling.
+    """
+    return "".join(UNICODE_HOMOGLYPHS.get(ch, ch) for ch in name)
+
+
 def confusable_variants(name: str) -> set[str]:
     """Generate visually-confusable variants of `name`.
 
-    Each variant applies ONE substitution from CONFUSABLE_SINGLE or
-    CONFUSABLE_MULTI. The original name is included in the result. Used to
-    catch typosquats that Levenshtein misses because the visual swap costs
-    more than max_distance edits (e.g. `rn` -> `m` is 2 Levenshtein ops).
+    Each variant applies ONE substitution from CONFUSABLE_SINGLE,
+    CONFUSABLE_MULTI, or Unicode homoglyph mapping. The original name is
+    included in the result. Used to catch typosquats that Levenshtein
+    misses because the visual swap costs more than max_distance edits
+    (e.g. `rn` -> `m` is 2 Levenshtein ops, Cyrillic `а` -> Latin `a` is
+    a binary-equal character).
     """
     variants: set[str] = {name}
+
+    deunicoded = deunicode(name)
+    if deunicoded != name:
+        variants.add(deunicoded)
 
     for src, dst in CONFUSABLE_MULTI.items():
         if src in name:

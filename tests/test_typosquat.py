@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# ruff: noqa: RUF001, RUF003
 """Tests for typosquat detection."""
 
 from __future__ import annotations
@@ -154,4 +155,42 @@ def test_check_catches_confusable_one_for_l() -> None:
 def test_check_catches_rn_for_m() -> None:
     # `modern-pkg` typed as `modem-pkg` (m vs rn)
     findings = check("modem-pkg", popular=frozenset({"modern-pkg"}))
+    assert findings
+
+
+def test_deunicode_cyrillic_homoglyphs() -> None:
+    from wtfguard.typosquat import deunicode
+    # `раckаge` with Cyrillic 'а' (U+0430) — looks identical to Latin 'a'
+    candidate = "pаckаge"
+    assert deunicode(candidate) == "package"
+
+
+def test_deunicode_greek_homoglyphs() -> None:
+    from wtfguard.typosquat import deunicode
+    # `rιch` with Greek iota 'ι' (U+03B9) — looks like Latin 'i'
+    candidate = "rιch"
+    assert deunicode(candidate) == "rich"
+
+
+def test_deunicode_preserves_pure_ascii() -> None:
+    from wtfguard.typosquat import deunicode
+    assert deunicode("requests") == "requests"
+
+
+def test_deunicode_handles_dash_lookalikes() -> None:
+    from wtfguard.typosquat import deunicode
+    # `acme–utils` with U+2013 en-dash
+    assert deunicode("acme–utils") == "acme-utils"
+
+
+def test_check_catches_cyrillic_homoglyph() -> None:
+    # Attacker registers package with Cyrillic 'а' — looks like `requests`
+    candidate = "rеquеsts"  # Cyrillic e
+    findings = check(candidate, popular=frozenset({"requests"}))
+    assert findings
+
+
+def test_check_catches_greek_homoglyph() -> None:
+    candidate = "pρistιne"  # Greek rho / iota → "pristine"
+    findings = check(candidate, popular=frozenset({"pristine"}))
     assert findings

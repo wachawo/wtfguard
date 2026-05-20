@@ -73,6 +73,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **License compliance check** — sixth detection axis, allowlist-based
 - [x] **`wtfguard verify-baseline <baseline.json>`** — CI gate against pinned scan
 - [x] **PEP 668 externally-managed detection** — surfaced in `doctor` and `pip` flows
+- [x] **Append-only audit log** — JSONL compliance trail at `~/.wtfguard/audit.log.jsonl`
+- [x] **Plugin entry-points** — third-party rule packs via `[project.entry-points."wtfguard.rules"]`
+- [x] **Unicode confusable typosquats** — Cyrillic/Greek homoglyph and dash-lookalike detection
 
 Not yet done (Phase 2+):
 

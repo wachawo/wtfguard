@@ -43,6 +43,12 @@ def isolate_license_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolate_audit_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Redirect the audit log to a tmp file so tests do not append to the real one."""
+    monkeypatch.setenv("WTFGUARD_AUDIT_LOG", str(tmp_path / "audit.jsonl"))
+
+
+@pytest.fixture(autouse=True)
 def isolate_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Pin config discovery to a tmp directory so an existing ~/.wtfguard/config.toml
     on the developer's machine doesn't leak into tests."""

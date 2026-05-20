@@ -173,3 +173,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a system Python that pip would refuse to write into.
   `wtfguard pip install` flow prints the same warning before delegating
 - 482 tests, 92.57% line coverage
+- **Append-only audit log** — new `wtfguard.audit_log` module writes one
+  JSON line per scan to `~/.wtfguard/audit.log.jsonl` (override via
+  `WTFGUARD_AUDIT_LOG` env, skip via `WTFGUARD_AUDIT_DISABLED=1`).
+  Wired into `scan`, `scan-requirements`, `scan-installed`. Includes
+  `read_entries`, `prune_older_than(days)` helpers for compliance
+  rotation
+- **Plugin entry-points** — new `wtfguard.plugins` discovers third-party
+  rule packs via `[project.entry-points."wtfguard.rules"]`. Each plugin
+  may declare a callable or a YAML path; `heuristics.load_rules` merges
+  them with bundled rules. Broken plugins are logged and skipped — they
+  never break wtfguard. Pass `include_plugins=False` to opt out
+- **Unicode confusable typosquats** — typosquat axis now de-Unicodes
+  candidate names before Levenshtein. Catches Cyrillic / Greek
+  homoglyph attacks where `rеquеsts` (Cyrillic 'е') looks identical to
+  Latin `requests`. Also normalises dash lookalikes (en-dash, em-dash,
+  non-breaking hyphen) to ASCII `-`
+- 513 tests, 92.41% line coverage

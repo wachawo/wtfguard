@@ -20,6 +20,7 @@ from wtfguard import (
     advisory,
     allowlist,
     analyzer,
+    audit_log,
     bench,
     concurrency,
     config,
@@ -141,6 +142,7 @@ def scan(
     else:
         render_verdict(verdict)
 
+    audit_log.log_verdict(verdict, command="scan")
     sys.exit(verdict.exit_code())
 
 
@@ -195,7 +197,7 @@ def scan_requirements(
             continue
         to_scan.append((name, version))
 
-    summary, worst = run_scan_batch(to_scan, options, jobs, json_mode=json_output)
+    summary, worst = run_scan_batch(to_scan, options, jobs, json_mode=json_output, audit_command="scan-requirements")
 
     if json_output:
         emit_batch_json(summary, skipped, worst)
@@ -267,7 +269,7 @@ def scan_installed(
 
     if not json_output:
         console.print(f"[bold]scanning {len(to_scan)} packages (jobs={jobs})[/bold]")
-    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM, json_mode=json_output)
+    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM, json_mode=json_output, audit_command="scan-installed")
 
     if json_output:
         emit_batch_json(summary, skipped, worst)
@@ -777,6 +779,7 @@ def run_scan_batch(
     jobs: int,
     only_show_above: Severity = Severity.CLEAN,
     json_mode: bool = False,
+    audit_command: str | None = None,
 ) -> tuple[list[Verdict], Severity]:
     """Concurrently analyze each (name, version) tuple. Returns verdicts + worst severity."""
     if not items:
@@ -805,6 +808,9 @@ def run_scan_batch(
         worst = Severity(max(int(worst), int(verdict.severity)))
         if not json_mode and verdict.severity >= only_show_above:
             render_verdict(verdict, compact=True)
+
+    if audit_command:
+        audit_log.log_batch(verdicts, command=audit_command)
     return verdicts, worst
 
 

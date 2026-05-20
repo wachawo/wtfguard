@@ -40,18 +40,28 @@ class Rule:
 DEFAULT_RULES_PATH = Path(__file__).parent / "data" / "patterns.yaml"
 
 
-def load_rules(yaml_path: Path | None = None, extra_paths: list[Path] | None = None) -> list[Rule]:
+def load_rules(
+    yaml_path: Path | None = None,
+    extra_paths: list[Path] | None = None,
+    include_plugins: bool = True,
+) -> list[Rule]:
     """Load bundled patterns.yaml plus any extra YAML files of the same shape.
 
     Extra rules with an id that matches a bundled rule replace it — letting
     users tighten or relax built-in patterns. Extra rules with new ids are
-    appended.
+    appended. `include_plugins=True` also pulls rule files from any installed
+    `wtfguard.rules` entry-point.
     """
     base_path = yaml_path or DEFAULT_RULES_PATH
     rules = read_rules_file(base_path)
     by_id: dict[str, Rule] = {r.id: r for r in rules}
 
-    for extra in extra_paths or []:
+    plugin_paths: list[Path] = []
+    if include_plugins:
+        from wtfguard import plugins as wtfguard_plugins  # local import to avoid cycle
+        plugin_paths = wtfguard_plugins.discover_rule_paths()
+
+    for extra in [*plugin_paths, *(extra_paths or [])]:
         for rule in read_rules_file(extra):
             if rule.id in by_id:
                 logger.info(f"Overriding rule {rule.id} from {extra}")
