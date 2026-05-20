@@ -28,12 +28,14 @@ from wtfguard import (
     dependency_tree,
     heuristics,
     html_report,
+    incident,
     installed,
     llm,
     lockfile,
     markdown_report,
     pip_wrapper,
     policy,
+    prefetch,
     pypi_signals,
     sarif,
     scan_dir,
@@ -787,6 +789,109 @@ def config_show(json_output: bool) -> None:
         for k, v in env_section.items():
             marker = "[green]set[/]" if v is not None else "[dim]unset[/]"
             console.print(f"  {k:28} {marker}  {v if v is not None else ''}")
+
+
+@main.command(name="incident")
+@click.argument("package_name")
+@click.option("--json", "json_output", is_flag=True)
+def incident_cmd(package_name: str, json_output: bool) -> None:
+    """Print a chronological release + advisory timeline for a package.
+
+    Useful for incident post-mortems: when did a vulnerable version ship,
+    when was the CVE disclosed, when did the fix arrive?
+    """
+    report = incident.build_report(package_name)
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+        return
+    print(incident.format_text(report))
+
+
+@main.command(name="prefetch")
+@click.argument("requirements_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--dest", type=click.Path(path_type=Path), default=None,
+              help="Target directory (default: ~/.wtfguard/prefetch)")
+@click.option("--json", "json_output", is_flag=True)
+def prefetch_cmd(requirements_file: Path, dest: Path | None, json_output: bool) -> None:
+    """Pre-download sdists for every pinned package — populate cache for --offline scans."""
+    packages = lockfile.dedupe_packages(lockfile.parse_file(requirements_file))
+    report = prefetch.run(packages, dest=dest)
+    if json_output:
+        print(json.dumps({
+            "total":     report.total,
+            "succeeded": report.succeeded,
+            "skipped":   report.skipped,
+            "failed":    [{"spec": s, "reason": r} for s, r in report.failed],
+        }, indent=2, ensure_ascii=False))
+        return
+    print(prefetch.format_text(report))
+    sys.exit(0 if not report.failed else 1)
+
+
+@main.group(name="policy-cli")
+def policy_group() -> None:
+    """Inspect and validate a YAML policy file."""
+
+
+@policy_group.command(name="show")
+@click.argument("policy_file", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=False)
+@click.option("--json", "json_output", is_flag=True)
+def policy_show(policy_file: Path | None, json_output: bool) -> None:
+    """Display the loaded policy (auto-discovered if no path given)."""
+    loaded = policy.load(policy_file)
+    if json_output:
+        payload = {
+            "source":    str(loaded.source) if loaded.source else None,
+            "overrides": [
+                {
+                    "rule":     o.rule,
+                    "packages": sorted(o.packages),
+                    "severity": o.severity.label() if o.severity else "ignore",
+                }
+                for o in loaded.overrides
+            ],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        return
+
+    console.print(f"[bold]source:[/]    {loaded.source or '(no policy file found)'}")
+    console.print(f"[bold]overrides:[/] {len(loaded.overrides)}")
+    for o in loaded.overrides:
+        sev = o.severity.label() if o.severity else "ignore"
+        scope = "all packages" if not o.packages else ", ".join(sorted(o.packages))
+        console.print(f"  {o.rule:24} → {sev:8}  ({scope})")
+
+
+@policy_group.command(name="validate")
+@click.argument("policy_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def policy_validate(policy_file: Path) -> None:
+    """Validate a policy file: parses, lists overrides, surfaces unknown rule IDs."""
+    loaded = policy.load(policy_file)
+    known_rules = {r.id for r in heuristics.load_rules()}
+    known_rules.update({
+        "KNOWN_ADVISORY",
+        "LOW_RELEASE_COUNT", "BRAND_NEW_PACKAGE", "STALE_PACKAGE",
+        "MISSING_PROJECT_URL", "SINGLE_FILE_RELEASE", "LOW_DOWNLOAD_VOLUME",
+        "TYPOSQUAT_CANDIDATE",
+        "LICENSE_INCOMPATIBLE", "LICENSE_UNKNOWN",
+    })
+
+    if not loaded.overrides:
+        console.print("[yellow]policy is empty — no overrides defined[/]")
+        sys.exit(0)
+
+    unknown: list[str] = []
+    for override in loaded.overrides:
+        if override.rule not in known_rules:
+            unknown.append(override.rule)
+
+    console.print(f"[bold]source:[/]    {loaded.source}")
+    console.print(f"[bold]overrides:[/] {len(loaded.overrides)}")
+    if unknown:
+        console.print(f"\n[red]unknown rule ids:[/] {', '.join(sorted(set(unknown)))}")
+        console.print("[dim]these overrides will never fire because the rules do not exist[/]")
+        sys.exit(1)
+    console.print("[green]policy is valid — all rule ids are known[/]")
 
 
 @main.group(name="audit-log")

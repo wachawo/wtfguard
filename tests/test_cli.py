@@ -947,6 +947,81 @@ def test_show_includes_attestation_status(runner: CliRunner, isolated_home: Path
     assert "yes" in result.output
 
 
+def test_incident_no_events(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.incident.pypi_signals.pull_pypi_metadata", return_value=None):
+        result = runner.invoke(cli.main, ["incident", "ghost"])
+    assert result.exit_code == 0
+    assert "no events" in result.output
+
+
+def test_incident_json(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.incident import IncidentReport
+    with patch("wtfguard.incident.build_report", return_value=IncidentReport(package="demo", events=[])):
+        result = runner.invoke(cli.main, ["incident", "demo", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["package"] == "demo"
+
+
+def test_prefetch_empty_file(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    req = tmp_path / "req.txt"
+    req.write_text("# only comments\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["prefetch", str(req)])
+    assert result.exit_code == 0
+    assert "succeeded: 0" in result.output
+
+
+def test_prefetch_json(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    req = tmp_path / "req.txt"
+    req.write_text("# empty\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["prefetch", str(req), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["total"] == 0
+
+
+def test_policy_cli_show_empty(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["policy-cli", "show"])
+    assert result.exit_code == 0
+    assert "overrides" in result.output
+
+
+def test_policy_cli_show_loaded(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    f = tmp_path / "policy.yaml"
+    f.write_text(
+        "overrides:\n"
+        "  - rule: NET_IN_SETUP\n    severity: low\n    packages: [acme-internal]\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(cli.main, ["policy-cli", "show", str(f)])
+    assert result.exit_code == 0
+    assert "NET_IN_SETUP" in result.output
+
+
+def test_policy_cli_validate_unknown_rule(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    f = tmp_path / "policy.yaml"
+    f.write_text("overrides:\n  - rule: TOTALLY_FAKE\n    severity: low\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["policy-cli", "validate", str(f)])
+    assert result.exit_code == 1
+    assert "unknown rule ids" in result.output
+
+
+def test_policy_cli_validate_known_rule(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    f = tmp_path / "policy.yaml"
+    f.write_text("overrides:\n  - rule: NET_IN_SETUP\n    severity: low\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["policy-cli", "validate", str(f)])
+    assert result.exit_code == 0
+    assert "policy is valid" in result.output
+
+
+def test_policy_cli_validate_empty(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    f = tmp_path / "policy.yaml"
+    f.write_text("overrides: []\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["policy-cli", "validate", str(f)])
+    assert result.exit_code == 0
+    assert "empty" in result.output
+
+
 def test_show_json_includes_attestation_fields(runner: CliRunner, isolated_home: Path) -> None:
     from datetime import datetime
 
