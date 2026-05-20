@@ -441,6 +441,15 @@ ruff check src tests
 mypy src
 ```
 
+Tests also run without installing the package — useful for first
+clones, sandboxes, or CI bootstrap. Either invocation works because
+`pyproject.toml` declares `pythonpath = ["src"]`:
+
+```bash
+python run_tests.py             # with coverage gate
+pytest                          # plain
+```
+
 The repo ships a `.githooks/pre-push` hook that runs the same three
 gates as CI. Enable it once per clone with:
 

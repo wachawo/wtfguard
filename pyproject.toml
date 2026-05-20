@@ -57,7 +57,7 @@ Issues = "https://github.com/wachawo/wtfguard/issues"
 packages = ["src/wtfguard"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/wtfguard", "tests", "README.md", "LICENSE", "CHANGELOG.md", "PROJECT.md"]
+include = ["src/wtfguard", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.ruff]
 line-length = 120
@@ -79,6 +79,7 @@ exclude = ["^src/wtfguard/golden/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 addopts = "-ra --strict-markers"
 markers = [
     "network: tests that hit PyPI (skipped by default in CI)",
