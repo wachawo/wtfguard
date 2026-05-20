@@ -50,14 +50,16 @@ DOWNLOAD_TIMEOUT = 5
 
 @dataclass(frozen=True)
 class PackageMetadata:
-    name:             str
-    latest_version:   str
-    summary:          str
-    project_urls:     dict[str, str]
-    release_count:    int
-    first_release_at: datetime | None
-    last_release_at:  datetime | None
+    name:              str
+    latest_version:    str
+    summary:           str
+    project_urls:      dict[str, str]
+    release_count:     int
+    first_release_at:  datetime | None
+    last_release_at:   datetime | None
     latest_file_count: int
+    has_attestations:  bool = False
+    attestation_count: int = 0
 
 
 def fetch_metadata(name: str) -> PackageMetadata | None:
@@ -103,8 +105,10 @@ def parse_metadata(name: str, raw: dict[str, Any]) -> PackageMetadata:
                 release_dates.append(parsed)
 
     release_dates.sort()
-    latest_release = releases.get(info.get("version", ""), [])
-    latest_file_count = len(latest_release) if isinstance(latest_release, list) else 0
+    latest_release_raw = releases.get(info.get("version", ""), [])
+    latest_release: list[Any] = latest_release_raw if isinstance(latest_release_raw, list) else []
+    latest_file_count = len(latest_release)
+    attestation_count = count_attestations(latest_release)
 
     return PackageMetadata(
         name=info.get("name") or name,
@@ -115,7 +119,26 @@ def parse_metadata(name: str, raw: dict[str, Any]) -> PackageMetadata:
         first_release_at=release_dates[0] if release_dates else None,
         last_release_at=release_dates[-1] if release_dates else None,
         latest_file_count=latest_file_count,
+        has_attestations=attestation_count > 0,
+        attestation_count=attestation_count,
     )
+
+
+def count_attestations(release_files: list[Any]) -> int:
+    """Count how many files in the latest release ship a PEP 740 attestation bundle.
+
+    PyPI publishes Sigstore-signed attestations under `attestations` on
+    individual file metadata. A non-zero count means the upload went
+    through a Trusted Publisher (OIDC) — a strong provenance signal.
+    """
+    count = 0
+    for file_info in release_files:
+        if not isinstance(file_info, dict):
+            continue
+        attestations = file_info.get("attestations")
+        if isinstance(attestations, list) and attestations:
+            count += 1
+    return count
 
 
 def parse_pypi_timestamp(value: object) -> datetime | None:

@@ -25,6 +25,7 @@ from wtfguard import (
     concurrency,
     config,
     cyclonedx,
+    dependency_tree,
     heuristics,
     html_report,
     installed,
@@ -468,26 +469,34 @@ def show(package_name: str, json_output: bool) -> None:
 
     if json_output:
         payload = {
-            "name":            meta.name,
-            "latest_version":  meta.latest_version,
-            "summary":         meta.summary,
-            "release_count":   meta.release_count,
-            "first_release":   meta.first_release_at.isoformat() if meta.first_release_at else None,
-            "last_release":    meta.last_release_at.isoformat() if meta.last_release_at else None,
-            "project_urls":    meta.project_urls,
-            "signals":         [f.to_dict() for f in findings],
-            "advisories":      [{"id": a.id, "severity": a.severity.label(), "summary": a.summary} for a in advisories],
+            "name":              meta.name,
+            "latest_version":    meta.latest_version,
+            "summary":           meta.summary,
+            "release_count":     meta.release_count,
+            "first_release":     meta.first_release_at.isoformat() if meta.first_release_at else None,
+            "last_release":      meta.last_release_at.isoformat() if meta.last_release_at else None,
+            "project_urls":      meta.project_urls,
+            "has_attestations":  meta.has_attestations,
+            "attestation_count": meta.attestation_count,
+            "signals":           [f.to_dict() for f in findings],
+            "advisories":        [{"id": a.id, "severity": a.severity.label(), "summary": a.summary} for a in advisories],
         }
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return
 
+    attestation_label = (
+        f"[green]yes[/] ({meta.attestation_count} files signed)"
+        if meta.has_attestations
+        else "[yellow]no[/] (not using Trusted Publishers)"
+    )
     body_lines: list[str] = [
-        f"[bold]Latest version:[/]   {meta.latest_version}",
-        f"[bold]Summary:[/]          {meta.summary or '(none)'}",
-        f"[bold]Releases:[/]         {meta.release_count}",
-        f"[bold]First release:[/]   {meta.first_release_at.date() if meta.first_release_at else 'unknown'}",
-        f"[bold]Last release:[/]    {meta.last_release_at.date() if meta.last_release_at else 'unknown'}",
-        f"[bold]Files in latest:[/] {meta.latest_file_count}",
+        f"[bold]Latest version:[/]    {meta.latest_version}",
+        f"[bold]Summary:[/]           {meta.summary or '(none)'}",
+        f"[bold]Releases:[/]          {meta.release_count}",
+        f"[bold]First release:[/]    {meta.first_release_at.date() if meta.first_release_at else 'unknown'}",
+        f"[bold]Last release:[/]     {meta.last_release_at.date() if meta.last_release_at else 'unknown'}",
+        f"[bold]Files in latest:[/]  {meta.latest_file_count}",
+        f"[bold]PEP 740 signed:[/]   {attestation_label}",
     ]
     if meta.project_urls:
         urls = ", ".join(f"{k}={v}" for k, v in meta.project_urls.items())
@@ -609,6 +618,142 @@ def scan_dir_cmd(
         render_verdict(verdict)
     audit_log.log_verdict(verdict, command="scan-dir")
     sys.exit(verdict.exit_code())
+
+
+@main.command(name="scan-tree")
+@click.argument("package_spec")
+@click.option("--max-depth", type=int, default=dependency_tree.DEFAULT_MAX_DEPTH,
+              help="Stop walking transitive dependencies past this depth (default 3)")
+@click.option("--max-nodes", type=int, default=dependency_tree.DEFAULT_MAX_NODES,
+              help="Hard cap on total nodes resolved (default 200)")
+@click.option("--no-llm", is_flag=True)
+@click.option("--no-cache", is_flag=True)
+@click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None)
+@click.option("--json", "json_output", is_flag=True, help="Emit verdicts as JSON")
+@click.option("--tree-only", is_flag=True, help="Just print the resolved tree, don't scan")
+@click.option("--jobs", "-j", type=int, default=4)
+def scan_tree_cmd(
+    package_spec: str,
+    max_depth: int,
+    max_nodes: int,
+    no_llm: bool,
+    no_cache: bool,
+    allowlist_path: Path | None,
+    json_output: bool,
+    tree_only: bool,
+    jobs: int,
+) -> None:
+    """Resolve a package's transitive dependency tree and scan every node.
+
+    Most supply-chain attacks ride in transitive dependencies — the one
+    you didn't choose but pip pulled anyway. This walks `requires_dist`
+    from PyPI metadata, capped at --max-depth and --max-nodes, then
+    runs the full scan pipeline on each resolved package.
+    """
+    name, version = parse_package_spec(package_spec)
+    tree = dependency_tree.resolve_tree(name, version, max_depth=max_depth, max_nodes=max_nodes)
+
+    if tree_only:
+        if json_output:
+            print(json.dumps(dependency_tree.tree_to_dict(tree), indent=2, ensure_ascii=False))
+        else:
+            console.print(dependency_tree.format_tree(tree))
+        return
+
+    specs = dependency_tree.collect_nodes(tree)
+    rules = allowlist.load(allowlist_path)
+    to_scan: list[tuple[str, str | None]] = []
+    skipped: list[str] = []
+    for n, v in specs:
+        if rules.allows(n, v):
+            skipped.append(f"{n}=={v or 'latest'}")
+            continue
+        to_scan.append((n, v))
+
+    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
+    if not json_output:
+        console.print(f"[bold]resolved {len(specs)} nodes, scanning {len(to_scan)} (jobs={jobs})[/]")
+    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM,
+                                    json_mode=json_output, audit_command="scan-tree")
+
+    if json_output:
+        payload = {
+            "tree":     dependency_tree.tree_to_dict(tree),
+            "verdicts": [v.to_dict() for v in summary],
+            "worst":    worst.label(),
+            "allowlisted": skipped,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        console.print()
+        render_requirements_summary(summary, worst)
+        if skipped:
+            console.print(f"[dim]allowlisted ({len(skipped)}):[/] {', '.join(skipped)}")
+    sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
+
+
+@main.group(name="config")
+def config_group() -> None:
+    """Inspect the effective wtfguard configuration."""
+
+
+@config_group.command(name="show")
+@click.option("--json", "json_output", is_flag=True)
+def config_show(json_output: bool) -> None:
+    """Print the effective config plus where each value came from."""
+    cfg = config.load()
+    payload = {
+        "source":    str(cfg.source) if cfg.source else None,
+        "scan": {
+            "jobs":     cfg.scan.jobs,
+            "no_llm":   cfg.scan.no_llm,
+            "no_cache": cfg.scan.no_cache,
+            "rules":    cfg.scan.rules,
+        },
+        "llm": {
+            "backend":           cfg.llm.backend,
+            "model":             cfg.llm.model,
+            "ollama_url":        cfg.llm.ollama_url,
+            "anthropic_api_key": "***" if cfg.llm.anthropic_api_key else None,
+        },
+        "allowlist": {"path": cfg.allowlist.path},
+        "env": {
+            "WTFGUARD_LLM_BACKEND":  os.getenv("WTFGUARD_LLM_BACKEND"),
+            "WTFGUARD_LLM_MODEL":    os.getenv("WTFGUARD_LLM_MODEL"),
+            "WTFGUARD_OLLAMA_URL":   os.getenv("WTFGUARD_OLLAMA_URL"),
+            "WTFGUARD_ALLOWLIST":    os.getenv("WTFGUARD_ALLOWLIST"),
+            "WTFGUARD_RULES":        os.getenv("WTFGUARD_RULES"),
+            "WTFGUARD_AUDIT_LOG":    os.getenv("WTFGUARD_AUDIT_LOG"),
+            "WTFGUARD_AUDIT_DISABLED": os.getenv("WTFGUARD_AUDIT_DISABLED"),
+            "ANTHROPIC_API_KEY":     "***" if os.getenv("ANTHROPIC_API_KEY") else None,
+        },
+    }
+
+    if json_output:
+        print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        return
+
+    source = payload["source"]
+    console.print(f"[bold]source:[/]   {source if source else '(none — using defaults)'}")
+
+    def _render(label: str, key: str, width: int) -> None:
+        section = payload.get(key)
+        if not isinstance(section, dict):
+            return
+        console.print(f"\n[bold]\\[{label}][/]")
+        for k, v in section.items():
+            console.print(f"  {k:{width}} = {v}")
+
+    _render("scan",      "scan",      9)
+    _render("llm",       "llm",       18)
+    _render("allowlist", "allowlist", 9)
+
+    env_section = payload.get("env")
+    if isinstance(env_section, dict):
+        console.print("\n[bold]env vars:[/]")
+        for k, v in env_section.items():
+            marker = "[green]set[/]" if v is not None else "[dim]unset[/]"
+            console.print(f"  {k:28} {marker}  {v if v is not None else ''}")
 
 
 @main.group(name="audit-log")

@@ -86,6 +86,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **`LOW_DOWNLOAD_VOLUME` signal** — pypistats-backed indicator for niche / abandoned packages
 - [x] **`wtfguard cache stats / clear`** — admin utilities for the three cache files
 - [x] **Shell completion** for bash / zsh / fish via `wtfguard completion <shell>`
+- [x] **`wtfguard scan-tree <package>`** — resolve transitive dependencies and scan each node
+- [x] **PEP 740 attestation status** in `wtfguard show`
+- [x] **`wtfguard config show`** — effective configuration + env-var inventory
 
 Not yet done (Phase 2+):
 

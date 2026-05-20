@@ -237,3 +237,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shell's completion directory for tab-completion of subcommands and
   flags
 - 579 tests, 92.73% line coverage
+- **`wtfguard scan-tree <package>`** — resolve transitive dependency
+  tree via `requires_dist` parsing and scan every node. New module
+  `wtfguard.dependency_tree` walks PEP 508 requirements (skipping
+  extras and unmatched environment markers), capped at `--max-depth`
+  (default 3) and `--max-nodes` (default 200). `--tree-only` just
+  prints the resolved tree without scanning. Closes the
+  direct-deps-only gap — most supply-chain attacks ride in transitive
+  packages
+- **PEP 740 attestation surfacing** — `pypi_signals.PackageMetadata`
+  gains `has_attestations` and `attestation_count` fields, populated
+  from per-file `attestations` arrays in PyPI JSON. `wtfguard show`
+  displays the attestation status (Trusted Publisher / OIDC signing)
+  in both text and JSON output. Informational only — no rule fires
+  yet because PEP 740 adoption is still rolling out
+- **`wtfguard config show`** — print the effective configuration
+  resolved from `wtfguard.toml` / `pyproject.toml` / `WTFGUARD_CONFIG`
+  / `~/.wtfguard/config.toml`, plus every wtfguard-relevant env var
+  with set/unset status. `--json` for machine consumption
+- 608 tests, 92.80% line coverage

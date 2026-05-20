@@ -866,6 +866,109 @@ def test_cache_clear_declined(runner: CliRunner, isolated_home: Path) -> None:
     assert "aborted" in result.output
 
 
+def test_config_show(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["config", "show"])
+    assert result.exit_code == 0
+    assert "scan" in result.output
+    assert "llm" in result.output
+    assert "env vars" in result.output
+
+
+def test_config_show_json(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["config", "show", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "scan" in payload
+    assert "llm" in payload
+    assert "env" in payload
+
+
+def test_scan_tree_tree_only(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.dependency_tree import TreeNode
+
+    fake_tree = TreeNode("demo", "1.0", 0, children=[TreeNode("dep", "2.0", 1)])
+    with patch("wtfguard.dependency_tree.resolve_tree", return_value=fake_tree):
+        result = runner.invoke(cli.main, ["scan-tree", "demo==1.0", "--tree-only"])
+    assert result.exit_code == 0
+    assert "demo==1.0" in result.output
+    assert "dep==2.0" in result.output
+
+
+def test_scan_tree_tree_only_json(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.dependency_tree import TreeNode
+
+    fake_tree = TreeNode("demo", "1.0", 0)
+    with patch("wtfguard.dependency_tree.resolve_tree", return_value=fake_tree):
+        result = runner.invoke(cli.main, ["scan-tree", "demo==1.0", "--tree-only", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["name"] == "demo"
+
+
+def test_scan_tree_scans_resolved_nodes(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.dependency_tree import TreeNode
+
+    fake_tree = TreeNode("demo", "1.0", 0, children=[TreeNode("dep_a", "2.0", 1)])
+    seen: list[str] = []
+
+    def fake_analyze(name, version, base, options):
+        seen.append(name)
+        return make_verdict(Severity.CLEAN)
+
+    with patch("wtfguard.dependency_tree.resolve_tree", return_value=fake_tree), \
+         patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-tree", "demo==1.0"])
+    assert result.exit_code == 0
+    assert "demo" in seen
+    assert "dep_a" in seen
+
+
+def test_show_includes_attestation_status(runner: CliRunner, isolated_home: Path) -> None:
+    from datetime import datetime
+
+    from wtfguard.pypi_signals import PackageMetadata
+
+    meta = PackageMetadata(
+        name="demo",
+        latest_version="1.0.0",
+        summary="",
+        project_urls={},
+        release_count=5,
+        first_release_at=datetime(2024, 1, 1, tzinfo=UTC),
+        last_release_at=datetime(2025, 1, 1, tzinfo=UTC),
+        latest_file_count=3,
+        has_attestations=True,
+        attestation_count=3,
+    )
+    with patch("wtfguard.pypi_signals.fetch_metadata", return_value=meta):
+        result = runner.invoke(cli.main, ["show", "demo"])
+    assert result.exit_code == 0
+    assert "PEP 740" in result.output
+    assert "yes" in result.output
+
+
+def test_show_json_includes_attestation_fields(runner: CliRunner, isolated_home: Path) -> None:
+    from datetime import datetime
+
+    from wtfguard.pypi_signals import PackageMetadata
+
+    meta = PackageMetadata(
+        name="demo", latest_version="1.0.0", summary="", project_urls={},
+        release_count=1,
+        first_release_at=datetime(2024, 1, 1, tzinfo=UTC),
+        last_release_at=datetime(2024, 1, 1, tzinfo=UTC),
+        latest_file_count=1,
+        has_attestations=False,
+        attestation_count=0,
+    )
+    with patch("wtfguard.pypi_signals.fetch_metadata", return_value=meta):
+        result = runner.invoke(cli.main, ["show", "demo", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["has_attestations"] is False
+    assert payload["attestation_count"] == 0
+
+
 def test_explain_known_rule(runner: CliRunner, isolated_home: Path) -> None:
     result = runner.invoke(cli.main, ["explain", "NET_IN_SETUP"])
     assert result.exit_code == 0
