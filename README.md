@@ -97,6 +97,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **`wtfguard policy-cli show / validate / init`** — inspect / lint / scaffold a policy file
 - [x] **`wtfguard threats`** — proactive OSV-backed scan of installed packages
 - [x] **`--min-severity LEVEL`** filter on batch scan commands
+- [x] **`wtfguard self-test`** — installation sanity check
+- [x] **`wtfguard sbom-merge`** — merge CycloneDX SBOMs (monorepo support)
+- [x] **`wtfguard schema <name>`** — JSON Schema for every wtfguard output format
 
 Not yet done (Phase 2+):
 

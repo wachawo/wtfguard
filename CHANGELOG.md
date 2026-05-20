@@ -301,3 +301,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raise `BRAND_NEW_PACKAGE`). `--force` to overwrite, `--output` for
   custom target
 - 688 tests, 93.08% line coverage
+- **`wtfguard self-test`** — sanity-check installation (Python version,
+  virtualenv, PEP 668, heuristics, state-dir, LLM backend). Exits 1 on
+  any failure; `--json` for tooling
+- **`wtfguard sbom-merge`** — merge multiple CycloneDX 1.5 SBOMs into
+  one. Dedupes components by `bom-ref`/`purl`/`name` and vulnerabilities
+  by `id`. Monorepo-friendly
+- **`wtfguard schema <name>`** — print JSON Schema for any wtfguard
+  output format (`verdict`, `batch`, `sarif`, `cyclonedx`)
+- 728 tests, 93.18% line coverage
