@@ -1,0 +1,53 @@
+# wtfguard heuristic patterns
+# Each rule has: id, severity, description, regex, optional file_scope
+# file_scope filters which files the rule applies to. install_script means
+# setup.py / setup.cfg / pyproject.toml; any means every file in the package.
+
+rules:
+  - id: NET_IN_SETUP
+    severity: high
+    description: Network call in install-script file (urllib / requests / socket / http)
+    file_scope: install_script
+    regex: '\b(urlopen|urlretrieve|requests\.(get|post|put)|socket\.(socket|create_connection)|http\.client\.HTTP)'
+
+  - id: EXEC_OBFUSCATED
+    severity: critical
+    description: exec/eval of decoded base64/hex/url content
+    file_scope: any
+    regex: '\b(exec|eval)\s*\(\s*(base64|codecs|bytes\.fromhex|__import__\s*\(\s*[''\"]base)'
+
+  - id: BASE64_BLOB
+    severity: medium
+    description: Large base64-encoded string literal (>=400 chars) — possible payload
+    file_scope: any
+    regex: '[''\"][A-Za-z0-9+/]{400,}={0,2}[''\"]'
+
+  - id: SUBPROCESS_DOWNLOAD
+    severity: high
+    description: subprocess invoking curl / wget / fetch / iwr
+    file_scope: any
+    regex: 'subprocess\.[A-Za-z_]+\s*\([^)]*\b(curl|wget|fetch|Invoke-WebRequest|iwr)\b'
+
+  - id: CREDENTIAL_READ
+    severity: critical
+    description: Reading SSH keys / AWS credentials / .env / shadow file
+    file_scope: any
+    regex: '(\.ssh/id_(rsa|ed25519|dsa)|\.aws/credentials|/etc/shadow|HOME.+\.netrc)'
+
+  - id: DLOPEN_DYNAMIC
+    severity: medium
+    description: ctypes dynamic library loading from variable path
+    file_scope: any
+    regex: 'ctypes\.(CDLL|cdll\.LoadLibrary|WinDLL)\s*\(\s*(?!["''])'
+
+  - id: OBFUSCATED_IMPORT
+    severity: high
+    description: __import__ from decoded base64/hex/zlib bytes
+    file_scope: any
+    regex: '__import__\s*\(\s*(base64|codecs|zlib|bytes\.fromhex)'
+
+  - id: ENV_EXFIL
+    severity: high
+    description: Iterating environment variables and sending them out
+    file_scope: any
+    regex: '(os\.environ|environ\.items|getenv).{0,80}(requests\.(post|put)|urlopen|socket)'

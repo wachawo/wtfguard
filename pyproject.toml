@@ -1,0 +1,84 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wtfguard"
+version = "0.1.0a0"
+description = "Semantic LLM audit for supply-chain attacks in pip/npm/cargo packages"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "wachawo" }]
+keywords = ["security", "supply-chain", "pypi", "audit", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Software Distribution",
+]
+dependencies = [
+    "click>=8.1",
+    "requests>=2.31",
+    "packaging>=23.2",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "types-requests",
+    "types-PyYAML",
+]
+
+[project.scripts]
+wtfguard = "wtfguard.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/wachawo/wtfguard"
+Repository = "https://github.com/wachawo/wtfguard"
+Issues = "https://github.com/wachawo/wtfguard/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wtfguard"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/wtfguard", "tests", "README.md", "LICENSE", "CHANGELOG.md", "PROJECT.md"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501", "UP009"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+files = ["src/wtfguard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "network: tests that hit PyPI (skipped by default in CI)",
+    "llm: tests that call Anthropic API",
+]
