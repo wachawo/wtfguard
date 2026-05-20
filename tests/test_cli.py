@@ -76,7 +76,7 @@ def test_doctor_command(runner: CliRunner, isolated_home: Path) -> None:
     result = runner.invoke(cli.main, ["doctor"])
     assert result.exit_code == 0
     assert "version" in result.output
-    assert "LLM available" in result.output
+    assert "backend" in result.output
 
 
 def test_achievements_empty(runner: CliRunner, isolated_home: Path) -> None:
@@ -407,3 +407,129 @@ def test_scan_installed_with_allowlist(runner: CliRunner, isolated_home: Path, t
         result = runner.invoke(cli.main, ["scan-installed", "--allowlist", str(allow)])
     assert result.exit_code == 0
     assert seen == ["beta"]
+
+
+def test_scan_requirements_poetry_lock_autodetects(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    f = tmp_path / "poetry.lock"
+    f.write_text(
+        "[[package]]\nname = \"requests\"\nversion = \"2.32.0\"\n\n"
+        "[[package]]\nname = \"numpy\"\nversion = \"1.26.0\"\n",
+        encoding="utf-8",
+    )
+
+    seen: list[str] = []
+
+    def fake_analyze(name, version, base_version, options):
+        seen.append(f"{name}=={version}")
+        return make_verdict(Severity.CLEAN)
+
+    with patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-requirements", str(f)])
+    assert result.exit_code == 0
+    assert seen == ["requests==2.32.0", "numpy==1.26.0"]
+
+
+def test_scan_requirements_pipfile_lock_autodetects(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    f = tmp_path / "Pipfile.lock"
+    f.write_text(
+        '{"default": {"requests": {"version": "==2.32.0"}}}',
+        encoding="utf-8",
+    )
+
+    seen: list[str] = []
+
+    def fake_analyze(name, version, base_version, options):
+        seen.append(name)
+        return make_verdict(Severity.CLEAN)
+
+    with patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-requirements", str(f)])
+    assert result.exit_code == 0
+    assert seen == ["requests"]
+
+
+def test_scan_requirements_json_output(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    req = tmp_path / "req.txt"
+    req.write_text("foo==1.0\nbar==2.0\n", encoding="utf-8")
+
+    def fake_analyze(name, version, base_version, options):
+        sev = Severity.HIGH if name == "bar" else Severity.CLEAN
+        return make_verdict(sev)
+
+    with patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-requirements", str(req), "--json"])
+    assert result.exit_code == 1  # high triggers exit 1
+    payload = json.loads(result.output)
+    assert "verdicts" in payload
+    assert "worst" in payload
+    assert payload["worst"] == "high"
+    assert len(payload["verdicts"]) == 2
+
+
+def test_scan_installed_json_output(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.installed import InstalledPackage
+
+    pkgs = [InstalledPackage(name="alpha", version="1.0")]
+    with patch("wtfguard.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.analyzer.analyze_package", return_value=make_verdict(Severity.CLEAN)):
+        result = runner.invoke(cli.main, ["scan-installed", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["worst"] == "clean"
+    assert len(payload["verdicts"]) == 1
+
+
+def test_verify_matching_cache_exits_0(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.cache import VerdictCache
+
+    verdict = make_verdict(Severity.HIGH)
+    verdict.diff_hash = "stable123"
+
+    # Pre-populate the cache so verify sees a match
+    with VerdictCache() as cache:
+        cache.put(verdict)
+
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict):
+        result = runner.invoke(cli.main, ["verify", "demo==1.0.0"])
+    assert result.exit_code == 0
+    assert "matches" in result.output.lower()
+
+
+def test_verify_mismatch_exits_1(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.cache import VerdictCache
+
+    cached_verdict = make_verdict(Severity.HIGH)
+    cached_verdict.diff_hash = "stable123"
+    fresh_verdict = make_verdict(Severity.CRITICAL)
+    fresh_verdict.diff_hash = "stable123"
+
+    with VerdictCache() as cache:
+        cache.put(cached_verdict)
+
+    with patch("wtfguard.analyzer.analyze_package", return_value=fresh_verdict):
+        result = runner.invoke(cli.main, ["verify", "demo==1.0.0"])
+    assert result.exit_code == 1
+    assert "MISMATCH" in result.output
+
+
+def test_verify_no_cache_exits_0(runner: CliRunner, isolated_home: Path) -> None:
+    verdict = make_verdict(Severity.HIGH)
+    verdict.diff_hash = "fresh-hash"
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict):
+        result = runner.invoke(cli.main, ["verify", "demo==1.0.0"])
+    assert result.exit_code == 0
+    assert "no cache" in result.output.lower()
+
+
+def test_verify_no_diff_hash_exits_0(runner: CliRunner, isolated_home: Path) -> None:
+    verdict = make_verdict(Severity.CLEAN)
+    verdict.diff_hash = None
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict):
+        result = runner.invoke(cli.main, ["verify", "demo"])
+    assert result.exit_code == 0
+
+
+def test_verify_lookup_error_exits_2(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.analyzer.analyze_package", side_effect=LookupError("missing")):
+        result = runner.invoke(cli.main, ["verify", "ghost==1.0"])
+    assert result.exit_code == 2

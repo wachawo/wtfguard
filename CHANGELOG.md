@@ -41,3 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   429 / 5xx and transient ConnectionError / Timeout (3 attempts, exponential
   backoff). Last response is returned if all retries return 5xx
 - 186 tests, 95% line coverage
+- **Ollama backend** for self-hosted LLM audit. Auto-detects when Claude
+  is unavailable; switch with `WTFGUARD_LLM_BACKEND=ollama`. Configurable
+  via `WTFGUARD_OLLAMA_URL` (default `http://localhost:11434`) and
+  `WTFGUARD_LLM_MODEL` (default `qwen2.5-coder:7b`). Speaks the `/api/chat`
+  endpoint with `format: json`
+- **Lockfile parsers** — `scan-requirements` auto-detects format by
+  filename: `poetry.lock`, `uv.lock`, `Pipfile.lock`, `requirements.txt`,
+  `requirements.in`. Duplicates are removed by case-insensitive
+  name+version key
+- **`wtfguard verify <package>`** — re-runs analysis, compares against
+  the cached verdict for the same diff-hash. Exit 0 on match, 1 on
+  divergence, 2 on lookup error. Foundation for the Phase 3 signed
+  shared cache
+- **`--json` for `scan-requirements` and `scan-installed`** — emits
+  `{verdicts: [...], allowlisted: [...], worst: <severity>}`. Closes the
+  asymmetry where only single `scan` had JSON output
+- `doctor` now shows the active backend, model, and Ollama URL
+- 227 tests, 95% line coverage

@@ -80,13 +80,15 @@ def test_build_user_prompt_short_diff_not_truncated() -> None:
     assert "diff truncated" not in prompt
 
 
-def test_is_available_false_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_is_available_false_without_key() -> None:
+    # The autouse fixture in conftest already unsets ANTHROPIC_API_KEY
+    # and points WTFGUARD_OLLAMA_URL at an unreachable address.
     assert is_available() is False
 
 
 def test_is_available_false_without_anthropic_package(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "claude")
     original = sys.modules.pop("anthropic", None)
     monkeypatch.setitem(sys.modules, "anthropic", None)
     try:
@@ -96,8 +98,7 @@ def test_is_available_false_without_anthropic_package(monkeypatch: pytest.Monkey
             sys.modules["anthropic"] = original
 
 
-def test_audit_diff_returns_none_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_audit_diff_returns_none_when_unavailable() -> None:
     result = audit_diff("demo", "1.0.0", "diff", load_rules())
     assert result is None
 
@@ -148,5 +149,127 @@ def test_audit_diff_handles_api_exception(monkeypatch: pytest.MonkeyPatch) -> No
     fake_anthropic = SimpleNamespace(Anthropic=MagicMock(return_value=fake_client))
 
     with patch.dict(sys.modules, {"anthropic": fake_anthropic}):
+        result = audit_diff("demo", "1.0.0", "diff", load_rules())
+    assert result is None
+
+
+def test_configured_backend_normalizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import configured_backend
+
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "OLLAMA")
+    assert configured_backend() == "ollama"
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "  claude  ")
+    assert configured_backend() == "claude"
+
+
+def test_configured_backend_invalid_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import configured_backend
+
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "openai")
+    assert configured_backend() is None
+
+
+def test_active_backend_explicit_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import active_backend
+
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "claude")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    fake_anthropic = SimpleNamespace(Anthropic=MagicMock())
+    with patch.dict(sys.modules, {"anthropic": fake_anthropic}):
+        assert active_backend() == "claude"
+
+
+def test_active_backend_explicit_ollama_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import active_backend
+
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "ollama")
+    assert active_backend() is None
+
+
+def test_active_backend_ollama_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import active_backend
+
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "ollama")
+    fake_resp = SimpleNamespace(status_code=200)
+    with patch("wtfguard.llm.requests.get", return_value=fake_resp):
+        assert active_backend() == "ollama"
+
+
+def test_default_model_for_each_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import DEFAULT_CLAUDE_MODEL, DEFAULT_OLLAMA_MODEL, default_model_for
+
+    monkeypatch.delenv("WTFGUARD_LLM_MODEL", raising=False)
+    assert default_model_for("claude") == DEFAULT_CLAUDE_MODEL
+    assert default_model_for("ollama") == DEFAULT_OLLAMA_MODEL
+
+
+def test_default_model_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import default_model_for
+
+    monkeypatch.setenv("WTFGUARD_LLM_MODEL", "custom-model")
+    assert default_model_for("claude") == "custom-model"
+    assert default_model_for("ollama") == "custom-model"
+
+
+def test_ollama_url_trims_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
+    from wtfguard.llm import ollama_url
+
+    monkeypatch.setenv("WTFGUARD_OLLAMA_URL", "http://host:11434/")
+    assert ollama_url() == "http://host:11434"
+
+
+def test_ollama_audit_diff_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "ollama")
+
+    fake_ping = SimpleNamespace(status_code=200)
+    fake_post = MagicMock()
+    fake_post.return_value = SimpleNamespace(
+        raise_for_status=lambda: None,
+        json=lambda: {
+            "message": {"content": '{"severity":"high","confidence":0.85,"explanation":"net"}'}
+        },
+    )
+
+    with patch("wtfguard.llm.requests.get", return_value=fake_ping), \
+         patch("wtfguard.llm.requests.post", fake_post):
+        result = audit_diff("demo", "1.0.0", "diff body", load_rules())
+
+    assert result is not None
+    assert result.severity == Severity.HIGH
+    assert result.confidence == 0.85
+    assert "qwen" in result.model or result.model
+    call = fake_post.call_args
+    assert call.kwargs["json"]["format"] == "json"
+    assert call.kwargs["json"]["stream"] is False
+    assert call.kwargs["json"]["messages"][0]["role"] == "system"
+
+
+def test_ollama_audit_diff_uses_response_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "ollama")
+
+    fake_ping = SimpleNamespace(status_code=200)
+    fake_post = MagicMock()
+    fake_post.return_value = SimpleNamespace(
+        raise_for_status=lambda: None,
+        json=lambda: {"response": '{"severity":"low","confidence":0.7,"explanation":"x"}'},
+    )
+
+    with patch("wtfguard.llm.requests.get", return_value=fake_ping), \
+         patch("wtfguard.llm.requests.post", fake_post):
+        result = audit_diff("demo", "1.0.0", "diff", load_rules())
+    assert result is not None
+    assert result.severity == Severity.LOW
+
+
+def test_ollama_audit_diff_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WTFGUARD_LLM_BACKEND", "ollama")
+
+    fake_ping = SimpleNamespace(status_code=200)
+
+    def fake_post(*args, **kwargs):
+        raise RuntimeError("connection refused")
+
+    with patch("wtfguard.llm.requests.get", return_value=fake_ping), \
+         patch("wtfguard.llm.requests.post", side_effect=fake_post):
         result = audit_diff("demo", "1.0.0", "diff", load_rules())
     assert result is None

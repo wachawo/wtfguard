@@ -22,10 +22,12 @@ from wtfguard import (
     concurrency,
     installed,
     llm,
+    lockfile,
     sarif,
     state,
     tips,
 )
+from wtfguard.cache import VerdictCache
 from wtfguard.models import Severity, Verdict
 
 LOG_FORMAT = "%(asctime)s.%(msecs)03d [%(levelname)s]: (%(name)s) %(message)s"
@@ -133,6 +135,7 @@ def scan(
               help="Path to allowlist file (default: auto-discover .wtfguardignore / WTFGUARD_ALLOWLIST / ~/.wtfguard/allowlist.txt)")
 @click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
               help="Write SARIF 2.1.0 report to this path")
+@click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_requirements(
     requirements_file: Path,
@@ -140,10 +143,15 @@ def scan_requirements(
     no_cache: bool,
     allowlist_path: Path | None,
     sarif_path: Path | None,
+    json_output: bool,
     jobs: int,
 ) -> None:
-    """Scan every pinned package in a requirements.txt-style file."""
-    packages = parse_requirements_file(requirements_file)
+    """Scan every pinned package in a requirements / lockfile.
+
+    Supported formats: requirements.txt, requirements.in, poetry.lock,
+    uv.lock, Pipfile.lock. Format is auto-detected by filename.
+    """
+    packages = lockfile.dedupe_packages(lockfile.parse_file(requirements_file))
     if not packages:
         console.print("[yellow]no packages parsed from file[/yellow]")
         sys.exit(0)
@@ -155,17 +163,21 @@ def scan_requirements(
     skipped: list[str] = []
     for name, version in packages:
         if rules.allows(name, version):
-            console.print(f"[dim]allowlisted[/dim] {name}=={version or 'latest'}")
+            if not json_output:
+                console.print(f"[dim]allowlisted[/dim] {name}=={version or 'latest'}")
             skipped.append(f"{name}=={version or 'latest'}")
             continue
         to_scan.append((name, version))
 
-    summary, worst = run_scan_batch(to_scan, options, jobs)
+    summary, worst = run_scan_batch(to_scan, options, jobs, json_mode=json_output)
 
-    console.print()
-    render_requirements_summary(summary, worst)
-    if skipped:
-        console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
+    if json_output:
+        emit_batch_json(summary, skipped, worst)
+    else:
+        console.print()
+        render_requirements_summary(summary, worst)
+        if skipped:
+            console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
     if sarif_path is not None:
         write_sarif(summary, sarif_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
@@ -179,6 +191,7 @@ def scan_requirements(
 @click.option("--max-packages", type=int, default=0, help="Cap scan at N packages (0 = no cap)")
 @click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
               help="Write SARIF 2.1.0 report to this path")
+@click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_installed(
     no_llm: bool,
@@ -187,6 +200,7 @@ def scan_installed(
     allowlist_path: Path | None,
     max_packages: int,
     sarif_path: Path | None,
+    json_output: bool,
     jobs: int,
 ) -> None:
     """Scan every package installed in the current Python environment."""
@@ -210,13 +224,17 @@ def scan_installed(
             continue
         to_scan.append((pkg.name, pkg.version))
 
-    console.print(f"[bold]scanning {len(to_scan)} packages (jobs={jobs})[/bold]")
-    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM)
+    if not json_output:
+        console.print(f"[bold]scanning {len(to_scan)} packages (jobs={jobs})[/bold]")
+    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM, json_mode=json_output)
 
-    console.print()
-    render_requirements_summary(summary, worst)
-    if skipped:
-        console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
+    if json_output:
+        emit_batch_json(summary, skipped, worst)
+    else:
+        console.print()
+        render_requirements_summary(summary, worst)
+        if skipped:
+            console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
     if sarif_path is not None:
         write_sarif(summary, sarif_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
@@ -260,11 +278,65 @@ def tip() -> None:
 @main.command()
 def doctor() -> None:
     """Show config: cache path, state path, LLM availability."""
+    backend = llm.active_backend()
+    requested = llm.configured_backend()
     console.print(f"version:        [bold]{__version__}[/bold]")
     console.print("cache:          ~/.wtfguard/cache.sqlite")
     console.print("state:          ~/.wtfguard/state.json")
-    console.print(f"LLM available:  [{'green' if llm.is_available() else 'yellow'}]{llm.is_available()}[/]")
-    console.print(f"LLM model:      {llm.DEFAULT_MODEL}")
+    console.print(f"backend (env):  {requested or '(autodetect)'}")
+    color = "green" if backend else "yellow"
+    console.print(f"backend (live): [{color}]{backend or 'none'}[/]")
+    if backend == llm.BACKEND_CLAUDE:
+        console.print(f"model:          {llm.default_model_for(backend)}")
+    elif backend == llm.BACKEND_OLLAMA:
+        console.print(f"model:          {llm.default_model_for(backend)}")
+        console.print(f"ollama-url:     {llm.ollama_url()}")
+    else:
+        console.print("model:          [dim](no backend reachable)[/]")
+
+
+@main.command()
+@click.argument("package_spec")
+def verify(package_spec: str) -> None:
+    """Re-scan a package and compare the new verdict to the cached one.
+
+    Useful for sanity-checking stale cache entries before relying on them.
+    Exits 0 if verdicts agree, 1 if they disagree, 2 on error.
+    """
+    name, version = parse_package_spec(package_spec)
+    options = analyzer.AnalysisOptions(use_llm=False, use_cache=False)
+
+    try:
+        fresh = analyzer.analyze_package(name, version, None, options)
+    except LookupError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        sys.exit(2)
+
+    if fresh.diff_hash is None:
+        render_verdict(fresh)
+        console.print("[yellow]no diff_hash → nothing to verify against (snapshot mode)[/]")
+        sys.exit(0)
+
+    with VerdictCache() as cache:
+        cached = cache.get(fresh.diff_hash)
+
+    if cached is None:
+        render_verdict(fresh)
+        console.print("[yellow]no cache entry → nothing to verify against[/]")
+        sys.exit(0)
+
+    matches = cached.severity == fresh.severity and len(cached.findings) == len(fresh.findings)
+    render_verdict(fresh)
+    if matches:
+        console.print(f"[green]verdict matches cache[/] (severity={fresh.severity.label()}, "
+                      f"findings={len(fresh.findings)})")
+        sys.exit(0)
+    console.print(
+        f"[red]VERDICT MISMATCH[/]\n"
+        f"  cached: severity={cached.severity.label()}, findings={len(cached.findings)}\n"
+        f"  fresh:  severity={fresh.severity.label()}, findings={len(fresh.findings)}"
+    )
+    sys.exit(1)
 
 
 def run_scan_batch(
@@ -272,6 +344,7 @@ def run_scan_batch(
     options: analyzer.AnalysisOptions,
     jobs: int,
     only_show_above: Severity = Severity.CLEAN,
+    json_mode: bool = False,
 ) -> tuple[list[Verdict], Severity]:
     """Concurrently analyze each (name, version) tuple. Returns verdicts + worst severity."""
     if not items:
@@ -282,12 +355,14 @@ def run_scan_batch(
         try:
             return analyzer.analyze_package(name, version, None, options)
         except LookupError as exc:
-            console.print(f"  [red]skip:[/red] {name}=={version or 'latest'} — {exc}")
+            if not json_mode:
+                console.print(f"  [red]skip:[/red] {name}=={version or 'latest'} — {exc}")
             return None
 
     def on_error(item: tuple[str, str | None], exc: BaseException) -> Verdict | None:
         name, version = item
-        console.print(f"  [red]error:[/red] {name}=={version or 'latest'} — {type(exc).__name__}: {exc}")
+        if not json_mode:
+            console.print(f"  [red]error:[/red] {name}=={version or 'latest'} — {type(exc).__name__}: {exc}")
         return None
 
     raw = concurrency.map_parallel(one, items, jobs=max(1, jobs), on_error=on_error)
@@ -296,9 +371,18 @@ def run_scan_batch(
     worst = Severity.CLEAN
     for verdict in verdicts:
         worst = Severity(max(int(worst), int(verdict.severity)))
-        if verdict.severity >= only_show_above:
+        if not json_mode and verdict.severity >= only_show_above:
             render_verdict(verdict, compact=True)
     return verdicts, worst
+
+
+def emit_batch_json(verdicts: list[Verdict], skipped: list[str], worst: Severity) -> None:
+    payload = {
+        "verdicts":    [v.to_dict() for v in verdicts],
+        "allowlisted": skipped,
+        "worst":       worst.label(),
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def write_sarif(verdicts: list[Verdict], path: Path) -> None:

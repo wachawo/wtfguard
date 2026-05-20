@@ -9,6 +9,20 @@ import pytest
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
 
+@pytest.fixture(autouse=True)
+def isolate_llm_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force LLM autodetect to find nothing unless a test opts in explicitly.
+
+    Tests that want to exercise a backend can monkeypatch their own env
+    or call internal functions directly. Without this, a developer
+    running tests on a machine with a live Ollama or ANTHROPIC_API_KEY
+    in their shell would get different behaviour than CI.
+    """
+    monkeypatch.setenv("WTFGUARD_OLLAMA_URL", "http://127.0.0.1:1")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("WTFGUARD_LLM_BACKEND", raising=False)
+
+
 @pytest.fixture
 def golden_dir() -> Path:
     return GOLDEN_DIR

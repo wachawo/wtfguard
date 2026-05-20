@@ -47,6 +47,10 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] SARIF 2.1.0 report output for GitHub Code Scanning / GitLab SAST
 - [x] Concurrent scanning with `--jobs N` thread pool
 - [x] PyPI retry/backoff on 429 / 5xx / transient connection errors
+- [x] Ollama backend for self-hosted LLM audit
+- [x] Lockfile parsers: `poetry.lock`, `uv.lock`, `Pipfile.lock`, `requirements.in`
+- [x] `wtfguard verify` — re-check a cached verdict
+- [x] `--json` output on every scan command
 
 Not yet done (Phase 2+):
 
@@ -87,10 +91,14 @@ export ANTHROPIC_API_KEY=sk-ant-...
 wtfguard scan ultralytics==8.3.42
 ```
 
-Scan every pinned dependency in a requirements file:
+Scan every pinned dependency in a requirements / lockfile (format auto-detected):
 
 ```bash
 wtfguard scan-requirements requirements.txt
+wtfguard scan-requirements poetry.lock
+wtfguard scan-requirements uv.lock
+wtfguard scan-requirements Pipfile.lock
+wtfguard scan-requirements requirements.txt --json    # machine-readable
 ```
 
 Scan everything currently installed in the active Python environment:
@@ -228,22 +236,28 @@ wtfguard scan requests --talkative
 WTFGUARD_TALKATIVE=1 wtfguard scan-requirements requirements.txt
 ```
 
-## Self-host LLM (Phase 2)
+## Self-host LLM (Ollama backend)
 
 For compliance-conscious teams that cannot send package source to a cloud
-provider, `wtfguard` will support an Ollama HTTP backend. Configuration:
+provider, `wtfguard` supports an Ollama HTTP backend out of the box. No
+code change needed — just run Ollama locally and set the env var:
 
-```toml
-# ~/.wtfguard/config.toml
-[llm]
-backend = "ollama"
-endpoint = "http://localhost:11434"
-model = "qwen2.5-coder:32b"
+```bash
+ollama pull qwen2.5-coder:7b               # or :32b on a beefier machine
+export WTFGUARD_LLM_BACKEND=ollama         # explicit
+export WTFGUARD_OLLAMA_URL=http://localhost:11434
+export WTFGUARD_LLM_MODEL=qwen2.5-coder:7b
+wtfguard scan ultralytics==8.3.42
 ```
 
-Quality versus Claude Haiku will be **honestly benchmarked** in the README
-when the backend ships. Smaller self-host models miss more obfuscation;
-that trade-off is your call, not hidden.
+When `WTFGUARD_LLM_BACKEND` is unset, wtfguard auto-detects: Claude if
+`ANTHROPIC_API_KEY` is present, otherwise Ollama if reachable, otherwise
+heuristics-only. `wtfguard doctor` shows which one will fire.
+
+**Honest trade-off:** Qwen 2.5-Coder-7B is meaningfully weaker than
+Claude Haiku at catching obfuscation. Use 32B if you have 12+ GB of VRAM.
+A formal FP/FN benchmark for each model is on the Phase 2 roadmap —
+[track issue](https://github.com/wachawo/wtfguard/issues).
 
 ## GitHub Actions
 
