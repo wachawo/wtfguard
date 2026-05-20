@@ -396,8 +396,6 @@ Emit SARIF and upload to GitHub Code Scanning:
     sarif_file: wtfguard.sarif
 ```
 
-Full reference: [`examples/github-action.md`](examples/github-action.md).
-
 ## Config file
 
 Skip retyping env vars by committing a `wtfguard.toml` at the repo root,
@@ -464,9 +462,4 @@ cargo, gem, go mod) are all welcome. Open an issue first to coordinate.
 
 ## Project documents
 
-- [`PROJECT.md`](PROJECT.md) — long-form rationale, market analysis,
-  pricing model, self-criticism. The *why*.
-- [`ROADMAP.md`](ROADMAP.md) — engineering punch list of what's not yet
-  built, grouped by phase and ranked by priority. The *what next*.
-- [`CHANGELOG.md`](CHANGELOG.md) — shipped features in Keep-a-Changelog
-  format. The *what already*.
+- [`CHANGELOG.md`](CHANGELOG.md) — shipped features in Keep-a-Changelog format.
