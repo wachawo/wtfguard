@@ -34,6 +34,7 @@ from wtfguard import (
     pip_wrapper,
     pypi_signals,
     sarif,
+    scan_dir,
     state,
     system_env,
     tips,
@@ -538,8 +539,32 @@ def load_env_rules() -> list[Path]:
 @click.option("--format", "fmt", type=click.Choice(["text", "markdown", "json"]), default="text")
 @click.option("--golden-dir", "golden_dir", type=click.Path(path_type=Path), default=None,
               help="Override the bundled golden fixture directory")
-def bench_cmd(fmt: str, golden_dir: Path | None) -> None:
-    """Run the heuristic engine against bundled golden fixtures and report FP/FN."""
+@click.option("--network", is_flag=True,
+              help="Run a shadow benchmark against the top-N real PyPI packages")
+@click.option("--top", type=int, default=bench.NETWORK_BENCH_DEFAULT_TOP,
+              help="Number of top packages to scan in --network mode")
+def bench_cmd(fmt: str, golden_dir: Path | None, network: bool, top: int) -> None:
+    """Run the heuristic engine against bundled golden fixtures and report FP/FN.
+
+    With `--network`, instead runs against the top-N PyPI packages by
+    download count — a real-world FP-rate measurement on assumed-legitimate
+    packages.
+    """
+    if network:
+        net_report = bench.run_network_benchmark(top=top)
+        if fmt == "json":
+            print(json.dumps({
+                "scanned":         net_report.total,
+                "failed":          net_report.failed_packages,
+                "flagged_high":    net_report.flagged_high,
+                "flagged_medium":  net_report.flagged_medium,
+                "fp_rate_high":    net_report.fp_rate_high,
+                "verdicts":        [v.to_dict() for v in net_report.verdicts],
+            }, indent=2, ensure_ascii=False))
+        else:
+            print(bench.format_network_text(net_report))
+        sys.exit(0 if net_report.flagged_high == 0 else 1)
+
     report = bench.run_benchmark(golden_dir)
     if fmt == "json":
         print(bench.format_json(report))
@@ -548,6 +573,110 @@ def bench_cmd(fmt: str, golden_dir: Path | None) -> None:
     else:
         print(bench.format_text(report))
     sys.exit(0 if report.false_positives == 0 and report.false_negatives == 0 else 1)
+
+
+@main.command(name="scan-dir")
+@click.argument("target", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--rules", "extra_rules", type=click.Path(path_type=Path), multiple=True,
+              help="Extra rules YAML files")
+@click.option("--name", "package_name", default=scan_dir.DEFAULT_PACKAGE_NAME,
+              help="Name to label this verdict with")
+@click.option("--version", "package_version", default="0.0.0")
+@click.option("--json", "json_output", is_flag=True, help="Emit verdict as JSON")
+def scan_dir_cmd(
+    target: Path,
+    extra_rules: tuple[Path, ...],
+    package_name: str,
+    package_version: str,
+    json_output: bool,
+) -> None:
+    """Scan a local source tree before publishing — no PyPI fetch.
+
+    Runs the heuristic engine (regex + AST + pyproject.toml) against every
+    file under TARGET. No advisory lookup, no LLM, no PyPI metadata — fast,
+    offline, deterministic. Use to dogfood your own package before release.
+    """
+    verdict = scan_dir.scan_local_directory(
+        target,
+        extra_rules=list(extra_rules) or None,
+        package_name=package_name,
+        package_version=package_version,
+    )
+    if json_output:
+        print(json.dumps(verdict.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        render_verdict(verdict)
+    audit_log.log_verdict(verdict, command="scan-dir")
+    sys.exit(verdict.exit_code())
+
+
+@main.group(name="audit-log")
+def audit_log_group() -> None:
+    """Inspect and rotate the append-only audit log."""
+
+
+@audit_log_group.command(name="show")
+@click.option("--limit", type=int, default=20, help="Show the last N entries (default 20)")
+@click.option("--severity", type=click.Choice(["clean", "low", "medium", "high", "critical"]),
+              default=None, help="Only entries at or above this severity")
+@click.option("--command", "command_filter", default=None,
+              help="Only entries from a given command")
+@click.option("--json", "json_output", is_flag=True, help="Emit entries as JSON")
+def audit_log_show(
+    limit: int,
+    severity: str | None,
+    command_filter: str | None,
+    json_output: bool,
+) -> None:
+    """Print recent entries from the audit log."""
+    entries = audit_log.read_entries()
+    if command_filter:
+        entries = [e for e in entries if e.get("command") == command_filter]
+    if severity:
+        threshold = Severity.from_name(severity)
+        entries = [
+            e for e in entries
+            if Severity.from_name(str(e.get("severity", "clean"))) >= threshold
+        ]
+    entries = entries[-limit:]
+
+    if json_output:
+        print(json.dumps(entries, indent=2, ensure_ascii=False))
+        return
+
+    if not entries:
+        console.print("[yellow]no matching audit-log entries[/]")
+        return
+
+    table = Table(title=f"wtfguard audit log (last {len(entries)})")
+    table.add_column("Timestamp")
+    table.add_column("Command")
+    table.add_column("Package")
+    table.add_column("Severity")
+    table.add_column("Findings", justify="right")
+    for entry in entries:
+        sev = str(entry.get("severity", "clean"))
+        sev_color = SEVERITY_COLOR.get(Severity.from_name(sev), "white")
+        table.add_row(
+            str(entry.get("timestamp", "")),
+            str(entry.get("command", "")),
+            f"{entry.get('package', '')} {entry.get('version', '')}",
+            f"[{sev_color}]{sev}[/]",
+            str(entry.get("findings_count", 0)),
+        )
+    console.print(table)
+
+
+@audit_log_group.command(name="prune")
+@click.option("--days", type=int, required=True, help="Drop entries older than N days")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirm prompt")
+def audit_log_prune(days: int, yes: bool) -> None:
+    """Remove audit-log entries older than --days days."""
+    if not yes and not click.confirm(f"Prune entries older than {days} days?", default=False):
+        console.print("[yellow]aborted[/]")
+        sys.exit(0)
+    removed = audit_log.prune_older_than(days)
+    console.print(f"removed {removed} entries")
 
 
 @main.command(name="rules")

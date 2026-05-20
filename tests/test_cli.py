@@ -656,6 +656,111 @@ def test_pip_install_no_specs(runner: CliRunner, isolated_home: Path) -> None:
     mock_delegate.assert_called_once()
 
 
+def test_scan_dir_clean(runner: CliRunner, isolated_home: Path, safe_package: Path) -> None:
+    result = runner.invoke(cli.main, ["scan-dir", str(safe_package)])
+    assert result.exit_code == 0
+    assert "CLEAN" in result.output
+
+
+def test_scan_dir_critical_exits_2(runner: CliRunner, isolated_home: Path, malicious_package: Path) -> None:
+    result = runner.invoke(cli.main, ["scan-dir", str(malicious_package)])
+    assert result.exit_code == 2
+
+
+def test_scan_dir_json_output(runner: CliRunner, isolated_home: Path, safe_package: Path) -> None:
+    result = runner.invoke(cli.main, ["scan-dir", str(safe_package), "--json", "--name", "my-pkg"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["package"] == "my-pkg"
+    assert payload["severity"] == "clean"
+
+
+def test_bench_network_no_packages(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.bench.fetch_top_packages", return_value=[]):
+        result = runner.invoke(cli.main, ["bench", "--network", "--top", "5"])
+    assert result.exit_code == 0  # 0 flagged_high
+
+
+def test_bench_network_finds_flagged(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.bench import NetworkBenchmarkReport
+    from wtfguard.models import Verdict
+
+    flagged = Verdict(package="bar", version="1.0", severity=Severity.HIGH, confidence=0.9)
+    fake_report = NetworkBenchmarkReport(verdicts=[flagged])
+    with patch("wtfguard.bench.run_network_benchmark", return_value=fake_report):
+        result = runner.invoke(cli.main, ["bench", "--network", "--top", "1"])
+    assert result.exit_code == 1
+    assert "HIGH+ findings" in result.output
+
+
+def test_bench_network_json_output(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.bench import NetworkBenchmarkReport
+
+    fake_report = NetworkBenchmarkReport(verdicts=[], failed_packages=["ghost"])
+    with patch("wtfguard.bench.run_network_benchmark", return_value=fake_report):
+        result = runner.invoke(cli.main, ["bench", "--network", "--format", "json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["scanned"] == 0
+    assert "ghost" in payload["failed"]
+
+
+def test_audit_log_show_empty(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["audit-log", "show"])
+    assert result.exit_code == 0
+    assert "no matching" in result.output
+
+
+def test_audit_log_show_recent_entries(runner: CliRunner, isolated_home: Path) -> None:
+    # Run a scan to populate the audit log
+    from wtfguard.models import Verdict
+    verdict = Verdict(package="demo", version="1.0", severity=Severity.LOW, confidence=1.0)
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict):
+        runner.invoke(cli.main, ["scan", "demo==1.0"])
+
+    result = runner.invoke(cli.main, ["audit-log", "show"])
+    assert result.exit_code == 0
+    assert "demo" in result.output
+
+
+def test_audit_log_show_severity_filter(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.models import Verdict
+    high = Verdict(package="bad", version="1.0", severity=Severity.HIGH, confidence=0.8)
+    clean = Verdict(package="ok", version="1.0", severity=Severity.CLEAN, confidence=1.0)
+    with patch("wtfguard.analyzer.analyze_package", side_effect=[high, clean]):
+        runner.invoke(cli.main, ["scan", "bad==1.0"])
+        runner.invoke(cli.main, ["scan", "ok==1.0"])
+
+    result = runner.invoke(cli.main, ["audit-log", "show", "--severity", "high"])
+    assert result.exit_code == 0
+    assert "bad" in result.output
+    assert "ok" not in result.output
+
+
+def test_audit_log_show_json(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.models import Verdict
+    verdict = Verdict(package="demo", version="1.0", severity=Severity.LOW, confidence=1.0)
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict):
+        runner.invoke(cli.main, ["scan", "demo==1.0"])
+
+    result = runner.invoke(cli.main, ["audit-log", "show", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert isinstance(payload, list)
+
+
+def test_audit_log_prune_with_yes(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["audit-log", "prune", "--days", "30", "--yes"])
+    assert result.exit_code == 0
+    assert "removed" in result.output
+
+
+def test_audit_log_prune_declined(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["audit-log", "prune", "--days", "30"], input="n\n")
+    assert result.exit_code == 0
+    assert "aborted" in result.output
+
+
 def test_explain_known_rule(runner: CliRunner, isolated_home: Path) -> None:
     result = runner.invoke(cli.main, ["explain", "NET_IN_SETUP"])
     assert result.exit_code == 0
