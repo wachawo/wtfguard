@@ -17,6 +17,7 @@ from rich.table import Table
 from wtfguard import (
     __version__,
     achievements,
+    advisory,
     allowlist,
     analyzer,
     bench,
@@ -28,6 +29,7 @@ from wtfguard import (
     llm,
     lockfile,
     pip_wrapper,
+    pypi_signals,
     sarif,
     state,
     tips,
@@ -290,6 +292,64 @@ def tip() -> None:
     """Print one random security tip."""
     t = tips.random_tip()
     console.print(Panel(t.text, title=f"[bold]{t.level}[/bold]", border_style="cyan"))
+
+
+@main.command()
+@click.argument("package_name")
+@click.option("--json", "json_output", is_flag=True, help="Emit metadata as JSON")
+def show(package_name: str, json_output: bool) -> None:
+    """Print a read-only metadata report for a PyPI package.
+
+    Fetches PyPI metadata + OSV advisories without downloading the package.
+    Use this to triage before deciding whether to install/scan.
+    """
+    meta = pypi_signals.fetch_metadata(package_name)
+    if meta is None:
+        console.print(f"[red]error:[/red] package {package_name} not found on PyPI")
+        sys.exit(1)
+
+    findings = pypi_signals.derive_findings(meta)
+    advisories = advisory.lookup(package_name, meta.latest_version) if meta.latest_version else []
+
+    if json_output:
+        payload = {
+            "name":            meta.name,
+            "latest_version":  meta.latest_version,
+            "summary":         meta.summary,
+            "release_count":   meta.release_count,
+            "first_release":   meta.first_release_at.isoformat() if meta.first_release_at else None,
+            "last_release":    meta.last_release_at.isoformat() if meta.last_release_at else None,
+            "project_urls":    meta.project_urls,
+            "signals":         [f.to_dict() for f in findings],
+            "advisories":      [{"id": a.id, "severity": a.severity.label(), "summary": a.summary} for a in advisories],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+
+    body_lines: list[str] = [
+        f"[bold]Latest version:[/]   {meta.latest_version}",
+        f"[bold]Summary:[/]          {meta.summary or '(none)'}",
+        f"[bold]Releases:[/]         {meta.release_count}",
+        f"[bold]First release:[/]   {meta.first_release_at.date() if meta.first_release_at else 'unknown'}",
+        f"[bold]Last release:[/]    {meta.last_release_at.date() if meta.last_release_at else 'unknown'}",
+        f"[bold]Files in latest:[/] {meta.latest_file_count}",
+    ]
+    if meta.project_urls:
+        urls = ", ".join(f"{k}={v}" for k, v in meta.project_urls.items())
+        body_lines.append(f"[bold]URLs:[/] {urls}")
+    if findings:
+        body_lines.append("")
+        body_lines.append("[bold]Metadata signals:[/]")
+        for f in findings:
+            color = SEVERITY_COLOR.get(f.severity, "white")
+            body_lines.append(f"  [{color}]{f.severity.label():7}[/] {f.rule_id:24} {f.snippet}")
+    if advisories:
+        body_lines.append("")
+        body_lines.append("[bold]Known advisories:[/]")
+        for a in advisories:
+            color = SEVERITY_COLOR.get(a.severity, "white")
+            body_lines.append(f"  [{color}]{a.severity.label():7}[/] {a.id:24} {a.summary[:80]}")
+    console.print(Panel("\n".join(body_lines), title=f"[bold]{meta.name}[/]", border_style="blue"))
 
 
 @main.command()

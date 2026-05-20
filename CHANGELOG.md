@@ -105,3 +105,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`wtfguard explain <rule_id>`** — print a rule's id, severity, scope,
   regex, and description in a Rich panel. Case-insensitive id matching
 - 346 tests, 95.57% line coverage
+- **OSV.dev batch lookup** — new `advisory.lookup_batch` posts all
+  cache-miss queries to `https://api.osv.dev/v1/querybatch` in a single
+  HTTP roundtrip. Cuts `scan-installed` advisory latency on a 50-package
+  venv from ~50 sequential queries to 1
+- **PyPI metadata signals** — new `wtfguard.pypi_signals` module adds a
+  fourth detection axis on top of heuristics + OSV + LLM. Without
+  downloading the package, derives findings from PyPI JSON metadata:
+  `LOW_RELEASE_COUNT`, `BRAND_NEW_PACKAGE` (medium — typosquat candidate),
+  `STALE_PACKAGE`, `MISSING_PROJECT_URL`, `SINGLE_FILE_RELEASE`. 24h cache
+  at `~/.wtfguard/pypi-metadata-cache.json`
+- **`wtfguard show <package>`** — read-only metadata report card.
+  Pretty-print + `--json`. Shows latest version, summary, release dates,
+  file count, project URLs, derived metadata signals, and known OSV
+  advisories. No download, no heuristic scan — use for fast triage
+- `AnalysisOptions.use_metadata` toggle (default true). conftest autouse
+  fixture stubs the metadata fetcher so tests stay offline
+- 378 tests, 94.39% line coverage

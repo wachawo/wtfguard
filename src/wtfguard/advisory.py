@@ -28,6 +28,7 @@ from wtfguard.utils import normalize_name
 logger = logging.getLogger(__name__)
 
 OSV_QUERY_URL = "https://api.osv.dev/v1/query"
+OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
 CACHE_PATH = Path.home() / ".wtfguard" / "advisory-cache.json"
 CACHE_TTL_SECONDS = 24 * 3600
 REQUEST_TIMEOUT = 10
@@ -192,6 +193,88 @@ def lookup(name: str, version: str | None, cache: AdvisoryCache | None = None) -
     if cache is None:
         save_cache(target_cache)
     return advisories
+
+
+def lookup_batch(
+    specs: list[tuple[str, str | None]],
+    cache: AdvisoryCache | None = None,
+) -> dict[str, list[Advisory]]:
+    """Look up advisories for many specs in one HTTP call.
+
+    Returns a dict keyed by `f"{normalized_name}=={version}"`. Specs with an
+    unpinned version are returned as empty lists. Cache hits skip the network.
+    """
+    target_cache = cache if cache is not None else load_cache()
+    results: dict[str, list[Advisory]] = {}
+
+    pending: list[tuple[str, str]] = []
+    for name, version in specs:
+        if not version:
+            results[f"{normalize_name(name)}=="] = []
+            continue
+        key = f"{normalize_name(name)}=={version}"
+        cached = target_cache.get(key)
+        if cached is not None:
+            results[key] = cached
+        else:
+            pending.append((name, version))
+
+    if pending:
+        fetched = query_osv_batch(pending)
+        for (name, version), advisories in zip(pending, fetched, strict=True):
+            key = f"{normalize_name(name)}=={version}"
+            results[key] = advisories
+            target_cache.put(key, advisories)
+        if cache is None:
+            save_cache(target_cache)
+
+    return results
+
+
+def query_osv_batch(
+    specs: list[tuple[str, str]],
+    timeout: int = REQUEST_TIMEOUT,
+) -> list[list[Advisory]]:
+    """Single POST to /v1/querybatch. Returns per-query advisory lists in input order."""
+    if not specs:
+        return []
+    body = {
+        "queries": [
+            {"package": {"name": name, "ecosystem": "PyPI"}, "version": version}
+            for name, version in specs
+        ]
+    }
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    try:
+        resp = requests.post(OSV_BATCH_URL, json=body, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        payload = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning(f"OSV batch query failed: {type(exc).__name__}: {exc}")
+        return [[] for _ in specs]
+
+    raw_results = payload.get("results") or []
+    out: list[list[Advisory]] = []
+    for entry in raw_results:
+        if not isinstance(entry, dict):
+            out.append([])
+            continue
+        # batch responses can contain just IDs; the OSV API guarantees that
+        # detailed entries appear under "vulns" with id, summary, severity
+        # for IDs we need full details for, but for our threshold detection
+        # the IDs alone are enough to mark a finding.
+        wrapped = {"vulns": entry.get("vulns") or []}
+        advisories = parse_osv_response(wrapped)
+        if not advisories:
+            ids = [v.get("id") for v in (entry.get("vulns") or []) if isinstance(v, dict)]
+            advisories = [
+                Advisory(id=str(i), summary="", severity=Severity.MEDIUM, cvss_score=None)
+                for i in ids if i
+            ]
+        out.append(advisories)
+    while len(out) < len(specs):
+        out.append([])
+    return out
 
 
 def to_findings(advisories: list[Advisory], display_path: str = "<advisory>") -> list[Finding]:

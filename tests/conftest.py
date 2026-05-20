@@ -30,6 +30,13 @@ def isolate_advisory(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolate_pypi_signals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub PyPI metadata fetcher so analyzer tests never hit the network."""
+    monkeypatch.setattr("wtfguard.pypi_signals.signals_for", lambda name, now=None: [])
+    monkeypatch.setattr("wtfguard.pypi_signals.fetch_metadata", lambda name: None)
+
+
+@pytest.fixture(autouse=True)
 def isolate_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Pin config discovery to a tmp directory so an existing ~/.wtfguard/config.toml
     on the developer's machine doesn't leak into tests."""

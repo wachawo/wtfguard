@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from wtfguard import advisory, diff, heuristics, llm, pypi
+from wtfguard import advisory, diff, heuristics, llm, pypi, pypi_signals
 from wtfguard.cache import VerdictCache
 from wtfguard.models import Finding, Severity, Verdict
 
@@ -23,6 +23,7 @@ class AnalysisOptions:
     use_llm:        bool = True
     use_cache:      bool = True
     use_advisory:   bool = True
+    use_metadata:   bool = True
     cache_path:     Path | None = None
     work_dir:       Path | None = None
     extra_rules:    list[Path] | None = None
@@ -68,6 +69,8 @@ def analyze_snapshot(
     findings = heuristics.scan_directory(root, rules)
     if opts.use_advisory:
         findings.extend(advisory.to_findings(advisory.lookup(name, version)))
+    if opts.use_metadata:
+        findings.extend(pypi_signals.signals_for(name))
     severity = heuristics.aggregate_severity(findings)
     confidence = DEFAULT_HEURISTIC_CONFIDENCE if findings else 1.0
 
@@ -123,6 +126,8 @@ def analyze_diff(
     findings = heuristics.scan_directory(new_root, rules)
     if opts.use_advisory:
         findings.extend(advisory.to_findings(advisory.lookup(name, new_version)))
+    if opts.use_metadata:
+        findings.extend(pypi_signals.signals_for(name))
     severity = heuristics.aggregate_severity(findings)
     confidence = DEFAULT_HEURISTIC_CONFIDENCE if findings else 1.0
     llm_explanation: str | None = None

@@ -3,6 +3,7 @@
 """Tests for the click CLI (no network — analyzer is mocked)."""
 
 import json
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -686,6 +687,84 @@ def test_explain_loads_extra_rules(runner: CliRunner, isolated_home: Path, tmp_p
     assert result.exit_code == 0
     assert "TEAM_X_RULE" in result.output
     assert "team_x_marker" in result.output
+
+
+def test_show_known_package(runner: CliRunner, isolated_home: Path) -> None:
+    from datetime import datetime
+
+    from wtfguard.pypi_signals import PackageMetadata
+
+    meta = PackageMetadata(
+        name="demo",
+        latest_version="1.0.0",
+        summary="A demo package",
+        project_urls={"Homepage": "https://demo.example"},
+        release_count=15,
+        first_release_at=datetime(2023, 1, 1, tzinfo=UTC),
+        last_release_at=datetime(2025, 1, 1, tzinfo=UTC),
+        latest_file_count=8,
+    )
+    with patch("wtfguard.pypi_signals.fetch_metadata", return_value=meta):
+        result = runner.invoke(cli.main, ["show", "demo"])
+    assert result.exit_code == 0
+    assert "demo" in result.output
+    assert "1.0.0" in result.output
+    assert "Homepage" in result.output
+
+
+def test_show_not_found(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.pypi_signals.fetch_metadata", return_value=None):
+        result = runner.invoke(cli.main, ["show", "ghost"])
+    assert result.exit_code == 1
+    assert "not found" in result.output
+
+
+def test_show_json_format(runner: CliRunner, isolated_home: Path) -> None:
+    from datetime import datetime
+
+    from wtfguard.pypi_signals import PackageMetadata
+
+    meta = PackageMetadata(
+        name="demo",
+        latest_version="1.0.0",
+        summary="A demo",
+        project_urls={},
+        release_count=1,
+        first_release_at=datetime(2026, 5, 1, tzinfo=UTC),
+        last_release_at=datetime(2026, 5, 1, tzinfo=UTC),
+        latest_file_count=1,
+    )
+    with patch("wtfguard.pypi_signals.fetch_metadata", return_value=meta):
+        result = runner.invoke(cli.main, ["show", "demo", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["name"] == "demo"
+    assert payload["latest_version"] == "1.0.0"
+    assert "signals" in payload
+    assert "advisories" in payload
+
+
+def test_show_includes_metadata_signals_in_output(runner: CliRunner, isolated_home: Path) -> None:
+    from datetime import datetime
+
+    from wtfguard.pypi_signals import PackageMetadata
+
+    # Single release + missing URLs + single file → multiple LOW signals
+    meta = PackageMetadata(
+        name="suspicious",
+        latest_version="0.0.1",
+        summary="",
+        project_urls={},
+        release_count=1,
+        first_release_at=datetime(2026, 5, 18, tzinfo=UTC),
+        last_release_at=datetime(2026, 5, 18, tzinfo=UTC),
+        latest_file_count=1,
+    )
+    with patch("wtfguard.pypi_signals.fetch_metadata", return_value=meta):
+        result = runner.invoke(cli.main, ["show", "suspicious"])
+    assert result.exit_code == 0
+    assert "LOW_RELEASE_COUNT" in result.output
+    assert "MISSING_PROJECT_URL" in result.output
 
 
 def test_rules_extra_yaml_listed(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
