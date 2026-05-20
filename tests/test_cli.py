@@ -304,3 +304,106 @@ def test_scan_json_does_not_start_streamer(runner: CliRunner, isolated_home: Pat
          patch("wtfguard.tips.TipStreamer") as mock_streamer_cls:
         runner.invoke(cli.main, ["scan", "demo", "--talkative", "--json"])
     mock_streamer_cls.assert_not_called()
+
+
+def test_scan_allowlisted_skips_analyzer(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    allow = tmp_path / "ignore"
+    allow.write_text("demo\n", encoding="utf-8")
+    with patch("wtfguard.analyzer.analyze_package") as mock_analyze:
+        result = runner.invoke(cli.main, ["scan", "demo==1.0.0", "--allowlist", str(allow)])
+    assert result.exit_code == 0
+    assert "allowlisted" in result.output
+    mock_analyze.assert_not_called()
+
+
+def test_scan_requirements_allowlist_skips_some(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    req = tmp_path / "req.txt"
+    req.write_text("foo==1.0\nbar==2.0\n", encoding="utf-8")
+    allow = tmp_path / "ignore"
+    allow.write_text("foo\n", encoding="utf-8")
+
+    seen: list[str] = []
+
+    def fake_analyze(name, version, base_version, options):
+        seen.append(name)
+        return make_verdict(Severity.CLEAN)
+
+    with patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-requirements", str(req), "--allowlist", str(allow)])
+    assert result.exit_code == 0
+    assert seen == ["bar"]
+    assert "allowlisted" in result.output
+
+
+def test_scan_installed_runs_for_each_pkg(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.installed import InstalledPackage
+
+    pkgs = [InstalledPackage(name="alpha", version="1.0"), InstalledPackage(name="beta", version="2.0")]
+    seen: list[str] = []
+
+    def fake_analyze(name, version, base_version, options):
+        seen.append(f"{name}=={version}")
+        return make_verdict(Severity.CLEAN)
+
+    with patch("wtfguard.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-installed"])
+    assert result.exit_code == 0
+    assert seen == ["alpha==1.0", "beta==2.0"]
+
+
+def test_scan_installed_empty_env(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.installed.list_installed", return_value=[]):
+        result = runner.invoke(cli.main, ["scan-installed"])
+    assert result.exit_code == 0
+    assert "no installed packages" in result.output
+
+
+def test_scan_installed_max_packages(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.installed import InstalledPackage
+
+    pkgs = [InstalledPackage(name=f"p{i}", version="1.0") for i in range(5)]
+    seen: list[str] = []
+
+    def fake_analyze(name, version, base_version, options):
+        seen.append(name)
+        return make_verdict(Severity.CLEAN)
+
+    with patch("wtfguard.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-installed", "--max-packages", "2"])
+    assert result.exit_code == 0
+    assert len(seen) == 2
+
+
+def test_scan_installed_worst_severity_drives_exit(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.installed import InstalledPackage
+
+    pkgs = [InstalledPackage(name="alpha", version="1.0"), InstalledPackage(name="beta", version="2.0")]
+
+    def fake_analyze(name, version, base_version, options):
+        return make_verdict(Severity.CRITICAL if name == "beta" else Severity.CLEAN)
+
+    with patch("wtfguard.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-installed"])
+    assert result.exit_code == 2
+
+
+def test_scan_installed_with_allowlist(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    from wtfguard.installed import InstalledPackage
+
+    allow = tmp_path / "ignore"
+    allow.write_text("alpha\n", encoding="utf-8")
+    pkgs = [InstalledPackage(name="alpha", version="1.0"), InstalledPackage(name="beta", version="2.0")]
+    seen: list[str] = []
+
+    def fake_analyze(name, version, base_version, options):
+        seen.append(name)
+        return make_verdict(Severity.CLEAN)
+
+    with patch("wtfguard.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        result = runner.invoke(cli.main, ["scan-installed", "--allowlist", str(allow)])
+    assert result.exit_code == 0
+    assert seen == ["beta"]

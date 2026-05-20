@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from wtfguard import __version__, achievements, analyzer, llm, state, tips
+from wtfguard import __version__, achievements, allowlist, analyzer, installed, llm, state, tips
 from wtfguard.models import Severity, Verdict
 
 LOG_FORMAT = "%(asctime)s.%(msecs)03d [%(levelname)s]: (%(name)s) %(message)s"
@@ -59,6 +59,8 @@ def main(ctx: click.Context, verbose: bool) -> None:
 @click.option("--talkative", "talkative_flag", is_flag=True, default=None, help="Stream security tips during scan")
 @click.option("--silent", "silent_flag", is_flag=True, default=None, help="Suppress tips even if state.talkative is on")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdict as JSON")
+@click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None,
+              help="Path to allowlist file (default: auto-discover)")
 def scan(
     package_spec: str,
     base_version: str | None,
@@ -67,11 +69,17 @@ def scan(
     talkative_flag: bool | None,
     silent_flag: bool | None,
     json_output: bool,
+    allowlist_path: Path | None,
 ) -> None:
     """Scan a PyPI package. PACKAGE_SPEC can be `requests` or `requests==2.32.0`."""
     name, version = parse_package_spec(package_spec)
     user_state = state.load_state()
     talkative = pick_talkative(user_state.talkative, talkative_flag, silent_flag)
+
+    allowlist_rules = allowlist.load(allowlist_path)
+    if allowlist_rules.allows(name, version):
+        console.print(f"[dim]allowlisted[/dim] {name}=={version or 'latest'} — skipping scan")
+        sys.exit(0)
 
     options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
 
@@ -110,18 +118,26 @@ def scan(
 @click.argument("requirements_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--no-llm", is_flag=True)
 @click.option("--no-cache", is_flag=True)
-def scan_requirements(requirements_file: Path, no_llm: bool, no_cache: bool) -> None:
+@click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None,
+              help="Path to allowlist file (default: auto-discover .wtfguardignore / WTFGUARD_ALLOWLIST / ~/.wtfguard/allowlist.txt)")
+def scan_requirements(requirements_file: Path, no_llm: bool, no_cache: bool, allowlist_path: Path | None) -> None:
     """Scan every pinned package in a requirements.txt-style file."""
     packages = parse_requirements_file(requirements_file)
     if not packages:
         console.print("[yellow]no packages parsed from file[/yellow]")
         sys.exit(0)
 
+    rules = allowlist.load(allowlist_path)
     options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
     summary: list[Verdict] = []
     worst = Severity.CLEAN
+    skipped: list[str] = []
 
     for name, version in packages:
+        if rules.allows(name, version):
+            console.print(f"[dim]allowlisted[/dim] {name}=={version or 'latest'}")
+            skipped.append(f"{name}=={version or 'latest'}")
+            continue
         console.print(f"[bold]scanning[/bold] {name}=={version or 'latest'}")
         try:
             verdict = analyzer.analyze_package(name, version, None, options)
@@ -134,6 +150,60 @@ def scan_requirements(requirements_file: Path, no_llm: bool, no_cache: bool) -> 
 
     console.print()
     render_requirements_summary(summary, worst)
+    if skipped:
+        console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
+    sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
+
+
+@main.command(name="scan-installed")
+@click.option("--no-llm", is_flag=True)
+@click.option("--no-cache", is_flag=True)
+@click.option("--include-stdlib", is_flag=True, help="Include pip / setuptools / wheel / packaging")
+@click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None)
+@click.option("--max-packages", type=int, default=0, help="Cap scan at N packages (0 = no cap)")
+def scan_installed(
+    no_llm: bool,
+    no_cache: bool,
+    include_stdlib: bool,
+    allowlist_path: Path | None,
+    max_packages: int,
+) -> None:
+    """Scan every package installed in the current Python environment."""
+    packages = installed.list_installed(include_stdlib=include_stdlib)
+    if not packages:
+        console.print("[yellow]no installed packages found[/yellow]")
+        sys.exit(0)
+
+    if max_packages > 0:
+        packages = packages[:max_packages]
+
+    rules = allowlist.load(allowlist_path)
+    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
+    summary: list[Verdict] = []
+    worst = Severity.CLEAN
+    skipped: list[str] = []
+
+    console.print(f"[bold]scanning {len(packages)} installed packages[/bold]")
+    for pkg in packages:
+        spec = f"{pkg.name}=={pkg.version}"
+        if rules.allows(pkg.name, pkg.version):
+            skipped.append(spec)
+            continue
+        console.print(f"  {spec}")
+        try:
+            verdict = analyzer.analyze_package(pkg.name, pkg.version, None, options)
+        except LookupError as exc:
+            console.print(f"    [red]skip:[/red] {exc}")
+            continue
+        summary.append(verdict)
+        worst = Severity(max(int(worst), int(verdict.severity)))
+        if verdict.severity >= Severity.MEDIUM:
+            render_verdict(verdict, compact=True)
+
+    console.print()
+    render_requirements_summary(summary, worst)
+    if skipped:
+        console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 

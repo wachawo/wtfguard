@@ -1,0 +1,71 @@
+name: 'wtfguard scan'
+description: 'Semantic LLM audit for supply-chain attacks. Scans pinned dependencies and fails the build on high+ severity findings.'
+author: 'wachawo'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  requirements-file:
+    description: 'Path to requirements.txt to scan'
+    required: false
+    default: 'requirements.txt'
+  scan-installed:
+    description: 'Instead of a requirements file, scan everything already installed in the current Python env'
+    required: false
+    default: 'false'
+  fail-on:
+    description: 'Minimum severity that fails the build: low | medium | high | critical (default: high)'
+    required: false
+    default: 'high'
+  no-llm:
+    description: 'Disable the LLM stage even when ANTHROPIC_API_KEY is set'
+    required: false
+    default: 'false'
+  allowlist:
+    description: 'Path to allowlist file (overrides auto-discovery)'
+    required: false
+    default: ''
+  anthropic-api-key:
+    description: 'Anthropic API key to enable LLM audit (optional)'
+    required: false
+    default: ''
+
+outputs:
+  worst-severity:
+    description: 'The highest severity found across all scanned packages'
+    value: ${{ steps.scan.outputs.severity }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install wtfguard
+      shell: bash
+      run: pip install wtfguard
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        set -e
+        ARGS=""
+        [ "${{ inputs.no-llm }}" = "true" ] && ARGS="$ARGS --no-llm"
+        [ -n "${{ inputs.allowlist }}" ] && ARGS="$ARGS --allowlist ${{ inputs.allowlist }}"
+
+        if [ "${{ inputs.scan-installed }}" = "true" ]; then
+          wtfguard scan-installed $ARGS
+        else
+          wtfguard scan-requirements "${{ inputs.requirements-file }}" $ARGS
+        fi
+
+        case "${{ inputs.fail-on }}" in
+          low)      MIN=1 ;;
+          medium)   MIN=2 ;;
+          critical) MIN=4 ;;
+          *)        MIN=3 ;;
+        esac
+        EXIT=$?
+        if [ "$EXIT" -ge "$MIN" ]; then exit "$EXIT"; fi
+        exit 0

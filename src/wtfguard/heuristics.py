@@ -5,9 +5,11 @@
 import ast
 import logging
 import re
+import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -156,6 +158,148 @@ def scan_ast_setup_py(path: Path, content: str) -> list[Finding]:
     return findings
 
 
+SUSPICIOUS_BUILD_BACKENDS = frozenset({"setuptools.build_meta:__legacy__"})
+BUILD_HOOK_KEYS = ("hooks", "build-hooks", "pre-build", "post-build")
+
+
+def scan_pyproject_toml(path: Path, content: str) -> list[Finding]:
+    """TOML-aware checks for pyproject.toml.
+
+    Catches suspicious build-backends, custom build hooks (hatch/pdm/poetry),
+    and uncommon entry-points like `post_install`.
+    """
+    findings: list[Finding] = []
+    if path.name != "pyproject.toml":
+        return findings
+
+    try:
+        data: dict[str, Any] = tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        logger.debug(f"TOML parse failed for {path}: {exc}")
+        return findings
+
+    build_system = data.get("build-system") or {}
+    requires = build_system.get("requires") or []
+    if isinstance(requires, list):
+        for req in requires:
+            if isinstance(req, str) and looks_like_url_or_path(req):
+                findings.append(
+                    Finding(
+                        rule_id="BUILD_REQ_URL",
+                        severity=Severity.HIGH,
+                        file=str(path),
+                        line=1,
+                        snippet=req[:200],
+                        description="build-system.requires references a URL or path — unusual for legitimate packages",
+                    )
+                )
+
+    backend = build_system.get("build-backend")
+    if isinstance(backend, str) and not is_known_build_backend(backend):
+        findings.append(
+            Finding(
+                rule_id="UNKNOWN_BUILD_BACKEND",
+                severity=Severity.LOW,
+                file=str(path),
+                line=1,
+                snippet=backend[:200],
+                description="Uncommon build-backend — review the backend module before installing",
+            )
+        )
+
+    tool = data.get("tool") or {}
+    findings.extend(scan_tool_section_for_hooks(path, tool))
+    findings.extend(scan_entry_points(path, data.get("project") or {}))
+
+    return findings
+
+
+KNOWN_BUILD_BACKENDS = frozenset({
+    "setuptools.build_meta",
+    "flit_core.buildapi",
+    "flit.buildapi",
+    "poetry.core.masonry.api",
+    "poetry.masonry.api",
+    "hatchling.build",
+    "pdm.backend",
+    "pdm.pep517.api",
+    "maturin",
+    "scikit_build_core.build",
+    "mesonpy",
+})
+
+
+def is_known_build_backend(backend: str) -> bool:
+    head = backend.split(":", 1)[0]
+    if head in KNOWN_BUILD_BACKENDS:
+        return True
+    return backend in SUSPICIOUS_BUILD_BACKENDS
+
+
+def looks_like_url_or_path(req: str) -> bool:
+    return any(prefix in req for prefix in ("http://", "https://", "git+", "file:", "/", "@ "))
+
+
+def scan_tool_section_for_hooks(path: Path, tool: dict[str, Any]) -> list[Finding]:
+    out: list[Finding] = []
+    for tool_name, section in tool.items():
+        if not isinstance(section, dict):
+            continue
+        for key in BUILD_HOOK_KEYS:
+            if key not in section:
+                continue
+            value = section[key]
+            out.append(
+                Finding(
+                    rule_id="BUILD_HOOK",
+                    severity=Severity.MEDIUM,
+                    file=str(path),
+                    line=1,
+                    snippet=f"[tool.{tool_name}.{key}] = {str(value)[:160]}",
+                    description=f"Custom build hook under [tool.{tool_name}.{key}] — runs at install/build time",
+                )
+            )
+        if tool_name == "poetry":
+            scripts = section.get("scripts") or {}
+            if isinstance(scripts, dict):
+                for script_name, target in scripts.items():
+                    if isinstance(target, str) and "post_install" in script_name.lower():
+                        out.append(
+                            Finding(
+                                rule_id="POETRY_POSTINSTALL",
+                                severity=Severity.MEDIUM,
+                                file=str(path),
+                                line=1,
+                                snippet=f"{script_name} -> {target}",
+                                description="Poetry script named 'post_install*' — may run at install time",
+                            )
+                        )
+    return out
+
+
+def scan_entry_points(path: Path, project: dict[str, Any]) -> list[Finding]:
+    out: list[Finding] = []
+    entry_points = project.get("entry-points") or {}
+    if not isinstance(entry_points, dict):
+        return out
+    for group, items in entry_points.items():
+        if not isinstance(items, dict):
+            continue
+        if "install" in group.lower() or "post" in group.lower():
+            for name, target in items.items():
+                out.append(
+                    Finding(
+                        rule_id="ENTRY_POINT_INSTALL",
+                        severity=Severity.MEDIUM,
+                        file=str(path),
+                        line=1,
+                        snippet=f"[{group}] {name} = {target}",
+                        description=f"Entry-point group '{group}' suggests install-time execution",
+                    )
+                )
+    return out
+
+
 def scan_directory(root: Path, rules: list[Rule]) -> list[Finding]:
     """Walk a directory and apply heuristics to every relevant file."""
     findings: list[Finding] = []
@@ -176,6 +320,7 @@ def scan_directory(root: Path, rules: list[Rule]) -> list[Finding]:
         rel = path.relative_to(root) if path.is_relative_to(root) else path
         findings.extend(scan_text(Path(rel), content, rules))
         findings.extend(scan_ast_setup_py(Path(rel), content))
+        findings.extend(scan_pyproject_toml(Path(rel), content))
 
     return findings
 

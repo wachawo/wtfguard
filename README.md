@@ -40,6 +40,11 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] Optional Claude API integration with prompt caching
 - [x] CLI: `scan`, `scan-requirements`, `achievements`, `tip`, `doctor`
 
+- [x] `scan-installed` — discover and audit every package in the active venv
+- [x] Allowlist via `.wtfguardignore` / `WTFGUARD_ALLOWLIST` / `~/.wtfguard/allowlist.txt`
+- [x] `pyproject.toml` TOML scanner (build hooks, suspicious requires, entry-points)
+- [x] GitHub Action template (`action.yml`)
+
 Not yet done (Phase 2+):
 
 - [ ] npm and cargo support
@@ -47,7 +52,7 @@ Not yet done (Phase 2+):
 - [ ] Ollama backend for self-hosted LLM
 - [ ] Signed shared cache with M-of-N consensus
 - [ ] Public FP-benchmark on top-1000 PyPI
-- [ ] GitHub Actions integration template
+- [ ] SARIF output for enterprise CI
 
 ## Install
 
@@ -83,6 +88,23 @@ Scan every pinned dependency in a requirements file:
 
 ```bash
 wtfguard scan-requirements requirements.txt
+```
+
+Scan everything currently installed in the active Python environment:
+
+```bash
+wtfguard scan-installed
+wtfguard scan-installed --max-packages 20   # limit while iterating
+```
+
+Skip known-safe packages by writing a `.wtfguardignore` in the repo root:
+
+```
+# .wtfguardignore — committed to the repo
+requests
+numpy
+acme-*                 # any package starting with acme-
+internal-utils==1.2.3  # only this exact version
 ```
 
 Diff scan between two versions:
@@ -219,6 +241,29 @@ model = "qwen2.5-coder:32b"
 Quality versus Claude Haiku will be **honestly benchmarked** in the README
 when the backend ships. Smaller self-host models miss more obfuscation;
 that trade-off is your call, not hidden.
+
+## GitHub Actions
+
+Drop into any workflow:
+
+```yaml
+- uses: wachawo/wtfguard@main
+  with:
+    requirements-file: requirements.txt
+    fail-on: high                          # block on high+
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}  # optional
+```
+
+Or audit everything installed after a `pip install -e .`:
+
+```yaml
+- run: pip install -e .
+- uses: wachawo/wtfguard@main
+  with:
+    scan-installed: 'true'
+```
+
+Full reference: [`examples/github-action.md`](examples/github-action.md).
 
 ## Development
 
