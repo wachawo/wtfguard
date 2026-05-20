@@ -65,9 +65,11 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **OSV.dev batch lookup** — single HTTP call for N specs (was N sequential)
 - [x] **PyPI metadata signals** — `LOW_RELEASE_COUNT`, `BRAND_NEW_PACKAGE`, `STALE_PACKAGE`, ...
 - [x] **`wtfguard show <package>`** — read-only metadata report card without download
-- [x] **Typosquat detection** — Levenshtein distance against curated top-PyPI list
+- [x] **Typosquat detection** — Levenshtein + confusable substitution against curated top-PyPI list
 - [x] **Markdown report** (`--markdown <path>`) — for PR comments
 - [x] **`wtfguard watch <file>`** — file-watching dev loop
+- [x] **CycloneDX 1.5 SBOM output** (`--cyclonedx <path>`) — Dependency-Track / SBOM-friendly
+- [x] **`wtfguard diff <a.json> <b.json>`** — upgrade-audit diff between two scans
 
 Not yet done (Phase 2+):
 

@@ -139,3 +139,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another pane. Handles Ctrl-C gracefully, clamps interval to 30s,
   catches callback exceptions
 - 416 tests, 93.92% line coverage
+- **CycloneDX 1.5 SBOM output** (`--cyclonedx <path>`) — sixth report
+  format. Maps each verdict to a CycloneDX `component` (with PURL),
+  surfaces `KNOWN_ADVISORY` findings as `vulnerabilities`, and stashes
+  other findings under `component.properties` so OWASP Dependency-Track,
+  GitLab SBOM upload, AWS Inspector, etc. don't lose them
+- **Confusable substitution in typosquat** — `wtfguard.typosquat`
+  now generates visually-confusable variants of each candidate
+  (`0`↔`o`, `1`↔`l`, `5`↔`s`, `rn`↔`m`, `cl`↔`d`, `vv`↔`w`) and runs
+  Levenshtein against each. Catches attacks where the swap is more than
+  `max_distance` raw edits, e.g. `modem-pkg` vs `modern-pkg`
+- **`wtfguard diff <before.json> <after.json>`** — compare two scan
+  outputs (single-scan or batch). Reports added findings, removed
+  findings, severity changes, and worst-severity delta. Exits 1 on any
+  change, useful for upgrade-audit CI gates. `--json` for tooling
+- 449 tests, 93.35% line coverage

@@ -23,6 +23,7 @@ from wtfguard import (
     bench,
     concurrency,
     config,
+    cyclonedx,
     heuristics,
     html_report,
     installed,
@@ -34,6 +35,7 @@ from wtfguard import (
     sarif,
     state,
     tips,
+    verdict_diff,
     watch,
 )
 from wtfguard.cache import VerdictCache
@@ -150,6 +152,8 @@ def scan(
               help="Write standalone HTML report to this path")
 @click.option("--markdown", "markdown_path", type=click.Path(path_type=Path), default=None,
               help="Write Markdown report (for PR comments)")
+@click.option("--cyclonedx", "cyclonedx_path", type=click.Path(path_type=Path), default=None,
+              help="Write CycloneDX 1.5 SBOM JSON")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_requirements(
@@ -160,6 +164,7 @@ def scan_requirements(
     sarif_path: Path | None,
     html_path: Path | None,
     markdown_path: Path | None,
+    cyclonedx_path: Path | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -201,6 +206,8 @@ def scan_requirements(
         write_html(summary, skipped, html_path)
     if markdown_path is not None:
         write_markdown(summary, skipped, markdown_path)
+    if cyclonedx_path is not None:
+        write_cyclonedx(summary, cyclonedx_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -216,6 +223,8 @@ def scan_requirements(
               help="Write standalone HTML report to this path")
 @click.option("--markdown", "markdown_path", type=click.Path(path_type=Path), default=None,
               help="Write Markdown report (for PR comments)")
+@click.option("--cyclonedx", "cyclonedx_path", type=click.Path(path_type=Path), default=None,
+              help="Write CycloneDX 1.5 SBOM JSON")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_installed(
@@ -227,6 +236,7 @@ def scan_installed(
     sarif_path: Path | None,
     html_path: Path | None,
     markdown_path: Path | None,
+    cyclonedx_path: Path | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -268,6 +278,8 @@ def scan_installed(
         write_html(summary, skipped, html_path)
     if markdown_path is not None:
         write_markdown(summary, skipped, markdown_path)
+    if cyclonedx_path is not None:
+        write_cyclonedx(summary, cyclonedx_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -304,6 +316,44 @@ def tip() -> None:
     """Print one random security tip."""
     t = tips.random_tip()
     console.print(Panel(t.text, title=f"[bold]{t.level}[/bold]", border_style="cyan"))
+
+
+@main.command(name="diff")
+@click.argument("before", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("after", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--json", "json_output", is_flag=True, help="Emit diff as JSON")
+def diff_cmd(before: Path, after: Path, json_output: bool) -> None:
+    """Compare two JSON verdict outputs and report what changed.
+
+    Both inputs may be single-scan JSON (from `scan --json`) or batch JSON
+    (from `scan-requirements --json` / `scan-installed --json`). Exit code
+    is 0 when there is no per-finding change, 1 otherwise.
+    """
+    try:
+        before_payload = verdict_diff.load_json(before)
+        after_payload = verdict_diff.load_json(after)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]error:[/] {type(exc).__name__}: {exc}")
+        sys.exit(2)
+
+    result = verdict_diff.diff(before_payload, after_payload)
+
+    if json_output:
+        payload = {
+            "worst_before": result.worst_before.label(),
+            "worst_after":  result.worst_after.label(),
+            "added":        [vars(r) for r in result.added],
+            "removed":      [vars(r) for r in result.removed],
+            "severity_changed": [
+                {"before": vars(a), "after": vars(b)}
+                for a, b in result.severity_changed
+            ],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(verdict_diff.format_text(result))
+
+    sys.exit(0 if result.is_empty() else 1)
 
 
 @main.command(name="watch")
@@ -709,6 +759,14 @@ def write_markdown(verdicts: list[Verdict], allowlisted: list[str], path: Path) 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(markdown_report.render(verdicts, allowlisted), encoding="utf-8")
     console.print(f"[green]Markdown report written:[/] {path}")
+
+
+def write_cyclonedx(verdicts: list[Verdict], path: Path) -> None:
+    bom = cyclonedx.build_bom(verdicts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(bom, fh, indent=2, ensure_ascii=False)
+    console.print(f"[green]CycloneDX SBOM written:[/] {path}")
 
 
 def parse_package_spec(spec: str) -> tuple[str, str | None]:

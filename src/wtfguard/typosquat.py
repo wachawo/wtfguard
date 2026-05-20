@@ -31,6 +31,25 @@ POPULAR_PATH = Path(__file__).parent / "data" / "popular_pypi.txt"
 DEFAULT_MAX_DISTANCE = 2
 SHORT_NAME_LIMIT = 4
 
+# Visually-confusable substitutions. Each value is the canonical character
+# the key can be mistaken for. Bidirectional pairs are listed twice for
+# clarity. Multi-char keys like "rn"/"m" are also handled.
+CONFUSABLE_SINGLE: dict[str, str] = {
+    "0": "o", "o": "0",
+    "1": "l", "l": "1",
+    "5": "s", "s": "5",
+    "2": "z", "z": "2",
+    "i": "l",
+    "vv": "w",
+    "w": "vv",
+}
+CONFUSABLE_MULTI: dict[str, str] = {
+    "rn": "m",
+    "m":  "rn",
+    "cl": "d",
+    "d":  "cl",
+}
+
 
 def load_popular(path: Path | None = None) -> frozenset[str]:
     """Read the bundled list of normalized popular package names."""
@@ -67,6 +86,28 @@ def levenshtein(a: str, b: str) -> int:
     return previous[-1]
 
 
+def confusable_variants(name: str) -> set[str]:
+    """Generate visually-confusable variants of `name`.
+
+    Each variant applies ONE substitution from CONFUSABLE_SINGLE or
+    CONFUSABLE_MULTI. The original name is included in the result. Used to
+    catch typosquats that Levenshtein misses because the visual swap costs
+    more than max_distance edits (e.g. `rn` -> `m` is 2 Levenshtein ops).
+    """
+    variants: set[str] = {name}
+
+    for src, dst in CONFUSABLE_MULTI.items():
+        if src in name:
+            variants.add(name.replace(src, dst, 1))
+
+    for i, ch in enumerate(name):
+        replacement = CONFUSABLE_SINGLE.get(ch)
+        if replacement is not None:
+            variants.add(name[:i] + replacement + name[i + 1 :])
+
+    return variants
+
+
 def find_near_matches(
     candidate: str,
     popular: Iterable[str],
@@ -75,22 +116,33 @@ def find_near_matches(
     """Return (popular_name, distance) pairs within max_distance of candidate.
 
     Excludes the exact match — a name that IS in the popular list is
-    legitimate by definition. Sorted by distance ascending.
+    legitimate by definition. Sorted by distance ascending. Considers
+    confusable-substitution variants of the candidate too.
     """
     canon = normalize_name(candidate)
     if not canon:
         return []
-    matches: list[tuple[str, int]] = []
-    for name in popular:
-        if name == canon:
-            return []  # candidate IS the popular package — never a typosquat
-        if abs(len(name) - len(canon)) > max_distance:
-            continue
-        d = levenshtein(canon, name)
-        if 0 < d <= max_distance:
-            matches.append((name, d))
-    matches.sort(key=lambda pair: (pair[1], pair[0]))
-    return matches
+    popular_set = set(popular)
+
+    if canon in popular_set:
+        return []  # legitimate package
+
+    candidates = confusable_variants(canon)
+    matches: dict[str, int] = {}
+
+    for variant in candidates:
+        for name in popular_set:
+            if name == canon:
+                continue
+            if abs(len(name) - len(variant)) > max_distance:
+                continue
+            d = levenshtein(variant, name)
+            if 0 < d <= max_distance:
+                prev = matches.get(name)
+                if prev is None or d < prev:
+                    matches[name] = d
+
+    return sorted(matches.items(), key=lambda pair: (pair[1], pair[0]))
 
 
 def check(name: str, popular: Iterable[str] | None = None, max_distance: int = DEFAULT_MAX_DISTANCE) -> list[Finding]:

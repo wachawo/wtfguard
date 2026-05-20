@@ -119,3 +119,39 @@ def test_check_ultralytics_lookalike_flagged() -> None:
     findings = check("ultralyticss", popular=frozenset({"ultralytics"}))
     assert findings
     assert findings[0].severity == Severity.HIGH
+
+
+def test_confusable_variants_includes_original() -> None:
+    from wtfguard.typosquat import confusable_variants
+    variants = confusable_variants("requests")
+    assert "requests" in variants
+
+
+def test_confusable_variants_zero_to_o() -> None:
+    from wtfguard.typosquat import confusable_variants
+    variants = confusable_variants("python0rg")
+    assert "pythonorg" in variants
+
+
+def test_confusable_variants_rn_to_m() -> None:
+    from wtfguard.typosquat import confusable_variants
+    variants = confusable_variants("modern")
+    # 'rn' becomes 'm' → 'modem'
+    assert "modem" in variants
+
+
+def test_check_catches_confusable_zero_for_o() -> None:
+    findings = check("python0rg", popular=frozenset({"pythonorg"}))
+    assert findings
+    assert findings[0].rule_id == "TYPOSQUAT_CANDIDATE"
+
+
+def test_check_catches_confusable_one_for_l() -> None:
+    findings = check("p1easure", popular=frozenset({"pleasure"}))
+    assert findings
+
+
+def test_check_catches_rn_for_m() -> None:
+    # `modern-pkg` typed as `modem-pkg` (m vs rn)
+    findings = check("modem-pkg", popular=frozenset({"modern-pkg"}))
+    assert findings
