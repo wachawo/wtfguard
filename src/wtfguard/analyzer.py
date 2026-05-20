@@ -26,10 +26,21 @@ class AnalysisOptions:
     use_metadata:      bool = True
     use_typosquat:     bool = True
     use_license_check: bool = True
+    offline:           bool = False
     cache_path:        Path | None = None
     work_dir:          Path | None = None
     extra_rules:       list[Path] | None = None
     allowed_licenses:  list[str] | None = None
+
+    def __post_init__(self) -> None:
+        # offline mode is shorthand for "drop every network-dependent stage".
+        # We keep heuristics + typosquat + license_check (which reads cached
+        # metadata only) intact; PyPI fetch failures are the caller's
+        # problem in offline mode.
+        if self.offline:
+            self.use_llm = False
+            self.use_advisory = False
+            self.use_metadata = False
 
 
 def analyze_package(

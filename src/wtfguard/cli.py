@@ -33,6 +33,7 @@ from wtfguard import (
     lockfile,
     markdown_report,
     pip_wrapper,
+    policy,
     pypi_signals,
     sarif,
     scan_dir,
@@ -42,6 +43,7 @@ from wtfguard import (
     typosquat,
     verdict_diff,
     watch,
+    webhook,
 )
 from wtfguard import (
     baseline as baseline_mod,
@@ -153,8 +155,11 @@ def scan(
 @click.argument("requirements_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--no-llm", is_flag=True)
 @click.option("--no-cache", is_flag=True)
+@click.option("--offline", is_flag=True, help="Drop every network-dependent stage (LLM/advisory/metadata)")
 @click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None,
               help="Path to allowlist file (default: auto-discover .wtfguardignore / WTFGUARD_ALLOWLIST / ~/.wtfguard/allowlist.txt)")
+@click.option("--policy", "policy_path", type=click.Path(path_type=Path), default=None,
+              help="YAML policy file with severity overrides")
 @click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
               help="Write SARIF 2.1.0 report to this path")
 @click.option("--html", "html_path", type=click.Path(path_type=Path), default=None,
@@ -163,17 +168,22 @@ def scan(
               help="Write Markdown report (for PR comments)")
 @click.option("--cyclonedx", "cyclonedx_path", type=click.Path(path_type=Path), default=None,
               help="Write CycloneDX 1.5 SBOM JSON")
+@click.option("--webhook", "webhook_url", default=None,
+              help="POST a scan summary to this Slack/Discord/generic webhook URL")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_requirements(
     requirements_file: Path,
     no_llm: bool,
     no_cache: bool,
+    offline: bool,
     allowlist_path: Path | None,
+    policy_path: Path | None,
     sarif_path: Path | None,
     html_path: Path | None,
     markdown_path: Path | None,
     cyclonedx_path: Path | None,
+    webhook_url: str | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -188,7 +198,8 @@ def scan_requirements(
         sys.exit(0)
 
     rules = allowlist.load(allowlist_path)
-    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
+    active_policy = policy.load(policy_path)
+    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache, offline=offline)
 
     to_scan: list[tuple[str, str | None]] = []
     skipped: list[str] = []
@@ -200,7 +211,8 @@ def scan_requirements(
             continue
         to_scan.append((name, version))
 
-    summary, worst = run_scan_batch(to_scan, options, jobs, json_mode=json_output, audit_command="scan-requirements")
+    summary, worst = run_scan_batch(to_scan, options, jobs, json_mode=json_output,
+                                    audit_command="scan-requirements", active_policy=active_policy)
 
     if json_output:
         emit_batch_json(summary, skipped, worst)
@@ -209,6 +221,8 @@ def scan_requirements(
         render_requirements_summary(summary, worst)
         if skipped:
             console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
+        if active_policy.source is not None:
+            console.print(f"[dim]policy:[/] {active_policy.source} ({len(active_policy.overrides)} overrides)")
     if sarif_path is not None:
         write_sarif(summary, sarif_path)
     if html_path is not None:
@@ -217,14 +231,21 @@ def scan_requirements(
         write_markdown(summary, skipped, markdown_path)
     if cyclonedx_path is not None:
         write_cyclonedx(summary, cyclonedx_path)
+    if webhook_url:
+        ok = webhook.post(webhook_url, summary, worst)
+        if not json_output:
+            console.print("[green]webhook posted[/]" if ok else "[yellow]webhook delivery failed[/]")
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
 @main.command(name="scan-installed")
 @click.option("--no-llm", is_flag=True)
 @click.option("--no-cache", is_flag=True)
+@click.option("--offline", is_flag=True, help="Drop every network-dependent stage (LLM/advisory/metadata)")
 @click.option("--include-stdlib", is_flag=True, help="Include pip / setuptools / wheel / packaging")
 @click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None)
+@click.option("--policy", "policy_path", type=click.Path(path_type=Path), default=None,
+              help="YAML policy file with severity overrides")
 @click.option("--max-packages", type=int, default=0, help="Cap scan at N packages (0 = no cap)")
 @click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
               help="Write SARIF 2.1.0 report to this path")
@@ -234,18 +255,23 @@ def scan_requirements(
               help="Write Markdown report (for PR comments)")
 @click.option("--cyclonedx", "cyclonedx_path", type=click.Path(path_type=Path), default=None,
               help="Write CycloneDX 1.5 SBOM JSON")
+@click.option("--webhook", "webhook_url", default=None,
+              help="POST a scan summary to this Slack/Discord/generic webhook URL")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_installed(
     no_llm: bool,
     no_cache: bool,
+    offline: bool,
     include_stdlib: bool,
     allowlist_path: Path | None,
+    policy_path: Path | None,
     max_packages: int,
     sarif_path: Path | None,
     html_path: Path | None,
     markdown_path: Path | None,
     cyclonedx_path: Path | None,
+    webhook_url: str | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -259,7 +285,8 @@ def scan_installed(
         packages = packages[:max_packages]
 
     rules = allowlist.load(allowlist_path)
-    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
+    active_policy = policy.load(policy_path)
+    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache, offline=offline)
 
     to_scan: list[tuple[str, str | None]] = []
     skipped: list[str] = []
@@ -272,7 +299,9 @@ def scan_installed(
 
     if not json_output:
         console.print(f"[bold]scanning {len(to_scan)} packages (jobs={jobs})[/bold]")
-    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM, json_mode=json_output, audit_command="scan-installed")
+    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM,
+                                    json_mode=json_output, audit_command="scan-installed",
+                                    active_policy=active_policy)
 
     if json_output:
         emit_batch_json(summary, skipped, worst)
@@ -289,6 +318,10 @@ def scan_installed(
         write_markdown(summary, skipped, markdown_path)
     if cyclonedx_path is not None:
         write_cyclonedx(summary, cyclonedx_path)
+    if webhook_url:
+        ok = webhook.post(webhook_url, summary, worst)
+        if not json_output:
+            console.print("[green]webhook posted[/]" if ok else "[yellow]webhook delivery failed[/]")
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -1250,6 +1283,7 @@ def run_scan_batch(
     only_show_above: Severity = Severity.CLEAN,
     json_mode: bool = False,
     audit_command: str | None = None,
+    active_policy: policy.Policy | None = None,
 ) -> tuple[list[Verdict], Severity]:
     """Concurrently analyze each (name, version) tuple. Returns verdicts + worst severity."""
     if not items:
@@ -1272,6 +1306,9 @@ def run_scan_batch(
 
     raw = concurrency.map_parallel(one, items, jobs=max(1, jobs), on_error=on_error)
     verdicts: list[Verdict] = [v for v in raw if v is not None]
+
+    if active_policy is not None and not active_policy.is_empty():
+        verdicts = [policy.apply(v, active_policy) for v in verdicts]
 
     worst = Severity.CLEAN
     for verdict in verdicts:

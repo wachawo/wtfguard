@@ -256,3 +256,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / `~/.wtfguard/config.toml`, plus every wtfguard-relevant env var
   with set/unset status. `--json` for machine consumption
 - 608 tests, 92.80% line coverage
+- **YAML policy file** (`--policy <path>`) — new `wtfguard.policy` module
+  loads severity overrides per rule and per package. Supports
+  `severity: ignore` to drop findings entirely. Discovery chain:
+  explicit flag, `WTFGUARD_POLICY` env, `./wtfguard-policy.yaml`.
+  Applied post-scan via `policy.apply()` so the verdict's overall
+  severity is recomputed from surviving findings
+- **Webhook notification** (`--webhook <url>`) — new `wtfguard.webhook`
+  module POSTs a scan summary to Slack / Discord / generic JSON
+  endpoints. Format auto-detected from URL (`hooks.slack.com` →
+  Slack, `discord(app).com` → Discord, otherwise raw JSON), override
+  via `WTFGUARD_WEBHOOK_FORMAT`
+- **`--offline` mode** — `AnalysisOptions.offline=True` is shorthand
+  for disabling every network-dependent stage (LLM + advisory +
+  metadata). Heuristics, typosquat, and license_check keep running.
+  Exposed as `--offline` on both batch scan commands
+- 643 tests, 92.79% line coverage

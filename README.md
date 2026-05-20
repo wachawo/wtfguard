@@ -89,6 +89,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **`wtfguard scan-tree <package>`** — resolve transitive dependencies and scan each node
 - [x] **PEP 740 attestation status** in `wtfguard show`
 - [x] **`wtfguard config show`** — effective configuration + env-var inventory
+- [x] **YAML policy file** (`--policy <path>`) — per-rule/per-package severity overrides
+- [x] **Webhook notification** (`--webhook <url>`) — Slack / Discord / generic JSON
+- [x] **`--offline` mode** — drop every network stage (LLM/advisory/metadata)
 
 Not yet done (Phase 2+):
 
