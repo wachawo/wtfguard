@@ -63,6 +63,7 @@ include = ["src/wtfguard", "tests", "README.md", "LICENSE", "CHANGELOG.md", "PRO
 line-length = 120
 target-version = "py311"
 src = ["src", "tests"]
+extend-exclude = ["src/wtfguard/golden"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
@@ -74,6 +75,7 @@ strict = true
 warn_unused_ignores = true
 ignore_missing_imports = true
 files = ["src/wtfguard"]
+exclude = ["^src/wtfguard/golden/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

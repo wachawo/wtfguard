@@ -55,6 +55,9 @@ Phase 1 deliverables shipped in this snapshot:
   against the OSV.dev database; CVE/GHSA hits surface as `KNOWN_ADVISORY` findings
 - [x] **HTML report** (`--html <path>`) — standalone single-file audit report
 - [x] **TOML config file** (`~/.wtfguard/config.toml` or `./wtfguard.toml`)
+- [x] **`wtfguard bench`** — public FP/FN benchmark on bundled golden fixtures
+- [x] **`wtfguard pip install`** — pre-install wrapper around real pip
+- [x] **`wtfguard init`** + **`wtfguard rules`** — starter config and rule catalog
 
 Not yet done (Phase 2+):
 
@@ -139,6 +142,16 @@ Inspect runtime state:
 ```bash
 wtfguard doctor
 wtfguard achievements
+wtfguard rules                  # list every loaded heuristic
+wtfguard bench                  # run benchmark on bundled fixtures
+wtfguard init                   # drop starter wtfguard.toml + .wtfguardignore
+```
+
+Wrap pip so every install is scanned first:
+
+```bash
+wtfguard pip install requests==2.32.0 numpy
+wtfguard pip install -r requirements.txt --fail-on high
 ```
 
 ## Severity tiers
@@ -154,6 +167,29 @@ wtfguard achievements
 Severity is `max(heuristic_severity, llm_severity)` when the LLM is confident
 (>= 0.6). Below the confidence floor, only the heuristic verdict counts —
 preventing false positives from a hallucinating model.
+
+## Benchmark
+
+`wtfguard bench` runs the heuristic engine against the bundled
+`src/wtfguard/golden/` corpus of safe and malicious fixtures and reports
+per-rule TP/FP counts plus overall FP/FN rates. The current shipped
+corpus (5 malicious + 3 safe) calibrates to **0% FP / 0% FN at the
+HIGH+ severity threshold**.
+
+```
+$ wtfguard bench
+wtfguard heuristic benchmark
+  total fixtures:   8
+  safe:             3
+  malicious:        5
+  true positives:   5
+  false positives:  0   (rate 0.0%)
+  ...
+```
+
+The corpus is intentionally small for v0.1 — `--format markdown` is
+designed to be committed to a `benchmarks/` page; the Phase 2 roadmap
+expands it to a real top-1000 PyPI shadow benchmark.
 
 ## False positive rate philosophy
 

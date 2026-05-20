@@ -533,3 +533,123 @@ def test_verify_lookup_error_exits_2(runner: CliRunner, isolated_home: Path) -> 
     with patch("wtfguard.analyzer.analyze_package", side_effect=LookupError("missing")):
         result = runner.invoke(cli.main, ["verify", "ghost==1.0"])
     assert result.exit_code == 2
+
+
+def test_bench_text_format(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["bench"])
+    assert result.exit_code == 0
+    assert "true positives" in result.output
+
+
+def test_bench_markdown_format(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["bench", "--format", "markdown"])
+    assert result.exit_code == 0
+    assert result.output.startswith("# wtfguard heuristic benchmark")
+
+
+def test_bench_json_format(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["bench", "--format", "json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "totals" in payload
+    assert "rule_activations" in payload
+
+
+def test_rules_text(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["rules"])
+    assert result.exit_code == 0
+    assert "NET_IN_SETUP" in result.output
+
+
+def test_rules_json(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["rules", "--format", "json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert any(r["id"] == "NET_IN_SETUP" for r in payload)
+    assert all("regex" in r for r in payload)
+
+
+def test_init_creates_starter_files(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    result = runner.invoke(cli.main, ["init", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert (tmp_path / "wtfguard.toml").is_file()
+    assert (tmp_path / ".wtfguardignore").is_file()
+    assert "[scan]" in (tmp_path / "wtfguard.toml").read_text(encoding="utf-8")
+
+
+def test_init_skips_existing_without_force(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    (tmp_path / "wtfguard.toml").write_text("# user content\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["init", "--dir", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "skipped" in result.output
+    assert (tmp_path / "wtfguard.toml").read_text(encoding="utf-8") == "# user content\n"
+
+
+def test_init_force_overwrites(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    (tmp_path / "wtfguard.toml").write_text("# old\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["init", "--dir", str(tmp_path), "--force"])
+    assert result.exit_code == 0
+    assert "[scan]" in (tmp_path / "wtfguard.toml").read_text(encoding="utf-8")
+
+
+def test_pip_install_clean_delegates(runner: CliRunner, isolated_home: Path) -> None:
+    verdict = make_verdict(Severity.CLEAN)
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict), \
+         patch("wtfguard.pip_wrapper.delegate_to_pip", return_value=0) as mock_delegate:
+        result = runner.invoke(cli.main, ["pip", "install", "requests==2.32.0"])
+    assert result.exit_code == 0
+    mock_delegate.assert_called_once()
+
+
+def test_pip_install_critical_blocks(runner: CliRunner, isolated_home: Path) -> None:
+    verdict = make_verdict(Severity.CRITICAL)
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict), \
+         patch("wtfguard.pip_wrapper.delegate_to_pip") as mock_delegate:
+        result = runner.invoke(cli.main, ["pip", "install", "evil==1.0"])
+    assert result.exit_code == 2
+    assert "BLOCKED" in result.output
+    mock_delegate.assert_not_called()
+
+
+def test_pip_install_high_requires_confirm(runner: CliRunner, isolated_home: Path) -> None:
+    verdict = make_verdict(Severity.HIGH)
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict), \
+         patch("wtfguard.pip_wrapper.delegate_to_pip", return_value=0) as mock_delegate:
+        # User says "no" — abort
+        result = runner.invoke(cli.main, ["pip", "install", "risky"], input="n\n")
+    assert result.exit_code == 1
+    mock_delegate.assert_not_called()
+
+
+def test_pip_install_high_yes_skips_confirm(runner: CliRunner, isolated_home: Path) -> None:
+    verdict = make_verdict(Severity.HIGH)
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict), \
+         patch("wtfguard.pip_wrapper.delegate_to_pip", return_value=0) as mock_delegate:
+        result = runner.invoke(cli.main, ["pip", "install", "risky", "--yes"])
+    assert result.exit_code == 0
+    mock_delegate.assert_called_once()
+
+
+def test_pip_uninstall_bypasses_scan(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.analyzer.analyze_package") as mock_analyze, \
+         patch("wtfguard.pip_wrapper.delegate_to_pip", return_value=0) as mock_delegate:
+        result = runner.invoke(cli.main, ["pip", "uninstall", "-y", "requests"])
+    assert result.exit_code == 0
+    mock_analyze.assert_not_called()
+    mock_delegate.assert_called_once()
+
+
+def test_pip_install_fail_on_medium(runner: CliRunner, isolated_home: Path) -> None:
+    verdict = make_verdict(Severity.MEDIUM)
+    with patch("wtfguard.analyzer.analyze_package", return_value=verdict), \
+         patch("wtfguard.pip_wrapper.delegate_to_pip") as mock_delegate:
+        result = runner.invoke(cli.main, ["pip", "install", "x", "--fail-on", "medium"])
+    assert result.exit_code == 2
+    mock_delegate.assert_not_called()
+
+
+def test_pip_install_no_specs(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.pip_wrapper.delegate_to_pip", return_value=0) as mock_delegate:
+        result = runner.invoke(cli.main, ["pip", "install", "--upgrade-strategy", "eager"])
+    assert result.exit_code == 0
+    mock_delegate.assert_called_once()

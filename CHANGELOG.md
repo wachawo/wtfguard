@@ -73,3 +73,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Values project into env vars only if the env var is not already set
   (env/CLI always win)
 - 274 tests, 95% line coverage
+- **`wtfguard bench`** — offline benchmark runner against bundled golden
+  fixtures (`src/wtfguard/golden/{safe-*,malicious-*}`). Reports overall
+  TP/FP/FN/TN counts plus per-rule activation breakdown. Output formats:
+  text, markdown, json. Exit 1 if any FP or FN is observed. The first
+  shipped corpus calibrates 5 malicious + 3 safe fixtures with zero
+  overall FP/FN — every release ships its bench result in the changelog
+- **`wtfguard pip install <specs>`** — pre-install wrapper. Parses pip
+  args including `-r requirements`, scans each spec, blocks when worst
+  severity meets `--fail-on` threshold (default critical). On `high`
+  prompts for confirmation unless `--yes`. Delegates non-`install`
+  subcommands straight to pip
+- **`wtfguard rules`** — list every loaded heuristic rule with id,
+  severity, file scope, description. `--format json` for tooling
+- **`wtfguard init`** — drops a starter `wtfguard.toml` and
+  `.wtfguardignore` in the cwd (or `--dir`). `--force` to overwrite
+- 319 tests, 95.62% line coverage

@@ -19,12 +19,15 @@ from wtfguard import (
     achievements,
     allowlist,
     analyzer,
+    bench,
     concurrency,
     config,
+    heuristics,
     html_report,
     installed,
     llm,
     lockfile,
+    pip_wrapper,
     sarif,
     state,
     tips,
@@ -287,6 +290,161 @@ def tip() -> None:
     """Print one random security tip."""
     t = tips.random_tip()
     console.print(Panel(t.text, title=f"[bold]{t.level}[/bold]", border_style="cyan"))
+
+
+@main.command(name="bench")
+@click.option("--format", "fmt", type=click.Choice(["text", "markdown", "json"]), default="text")
+@click.option("--golden-dir", "golden_dir", type=click.Path(path_type=Path), default=None,
+              help="Override the bundled golden fixture directory")
+def bench_cmd(fmt: str, golden_dir: Path | None) -> None:
+    """Run the heuristic engine against bundled golden fixtures and report FP/FN."""
+    report = bench.run_benchmark(golden_dir)
+    if fmt == "json":
+        print(bench.format_json(report))
+    elif fmt == "markdown":
+        print(bench.format_markdown(report))
+    else:
+        print(bench.format_text(report))
+    sys.exit(0 if report.false_positives == 0 and report.false_negatives == 0 else 1)
+
+
+@main.command(name="rules")
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+def rules_cmd(fmt: str) -> None:
+    """List every heuristic rule loaded from patterns.yaml."""
+    loaded = heuristics.load_rules()
+    if fmt == "json":
+        payload = [
+            {
+                "id":          r.id,
+                "severity":    r.severity.label(),
+                "file_scope":  r.file_scope,
+                "description": r.description,
+                "regex":       r.regex.pattern,
+            }
+            for r in loaded
+        ]
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+
+    table = Table(title=f"wtfguard heuristic rules ({len(loaded)})")
+    table.add_column("ID")
+    table.add_column("Severity")
+    table.add_column("Scope")
+    table.add_column("Description")
+    for r in sorted(loaded, key=lambda r: (-int(r.severity), r.id)):
+        sev_color = SEVERITY_COLOR.get(r.severity, "white")
+        table.add_row(
+            r.id,
+            f"[{sev_color}]{r.severity.label()}[/]",
+            r.file_scope,
+            r.description,
+        )
+    console.print(table)
+
+
+@main.command(name="init")
+@click.option("--force", is_flag=True, help="Overwrite existing files")
+@click.option("--dir", "target_dir", type=click.Path(path_type=Path), default=None,
+              help="Initialise in this directory (default: cwd)")
+def init_cmd(force: bool, target_dir: Path | None) -> None:
+    """Create starter wtfguard.toml and .wtfguardignore in the current directory."""
+    base = target_dir or Path.cwd()
+    written: list[str] = []
+    skipped: list[str] = []
+
+    for filename, body in STARTER_FILES.items():
+        target = base / filename
+        if target.exists() and not force:
+            skipped.append(filename)
+            continue
+        target.write_text(body, encoding="utf-8")
+        written.append(filename)
+
+    for name in written:
+        console.print(f"[green]wrote[/] {base / name}")
+    for name in skipped:
+        console.print(f"[yellow]skipped (exists)[/] {base / name} — use --force to overwrite")
+
+
+STARTER_FILES = {
+    "wtfguard.toml": (
+        "# wtfguard project config — committed to the repo.\n"
+        "# Env vars and CLI flags always win over these defaults.\n"
+        "\n"
+        "[scan]\n"
+        "jobs = 4\n"
+        "# no_llm = true       # uncomment to skip the LLM stage by default\n"
+        "\n"
+        "[llm]\n"
+        "# backend = \"ollama\"   # or \"claude\"\n"
+        "# model = \"qwen2.5-coder:7b\"\n"
+        "# ollama_url = \"http://localhost:11434\"\n"
+        "\n"
+        "[allowlist]\n"
+        "path = \".wtfguardignore\"\n"
+    ),
+    ".wtfguardignore": (
+        "# wtfguard allowlist — one entry per line.\n"
+        "# Bare names (any version), pinned (name==version), or globs (acme-*).\n"
+        "\n"
+        "# requests\n"
+        "# numpy==1.26.0\n"
+        "# internal-*\n"
+    ),
+}
+
+
+@main.command(name="pip", context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.option("--no-llm", is_flag=True)
+@click.option("--no-cache", is_flag=True)
+@click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None)
+@click.option("--fail-on", type=click.Choice(["low", "medium", "high", "critical"]), default="critical",
+              help="Minimum severity that aborts install")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirm prompt on high (still blocks critical)")
+@click.pass_context
+def pip_cmd(
+    ctx: click.Context,
+    no_llm: bool,
+    no_cache: bool,
+    allowlist_path: Path | None,
+    fail_on: str,
+    yes: bool,
+) -> None:
+    """Pre-install scanner around the real pip. Example: `wtfguard pip install requests`."""
+    pip_argv: list[str] = list(ctx.args)
+    parsed = pip_wrapper.parse_pip_args(pip_argv)
+
+    if pip_wrapper.should_skip_scan(parsed):
+        sys.exit(pip_wrapper.delegate_to_pip(pip_argv))
+
+    if not parsed.specs:
+        console.print("[yellow]no package specs to scan — delegating to pip[/]")
+        sys.exit(pip_wrapper.delegate_to_pip(pip_argv))
+
+    threshold = Severity.from_name(fail_on)
+    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
+    console.print(f"[bold]wtfguard pre-install scan[/] of {len(parsed.specs)} package(s)")
+    verdicts, worst, skipped_pkgs = pip_wrapper.scan_specs(parsed.specs, options, allowlist_path)
+
+    for verdict in verdicts:
+        if verdict.severity >= Severity.MEDIUM:
+            render_verdict(verdict, compact=True)
+
+    if worst >= threshold:
+        console.print(f"[red bold]BLOCKED:[/] worst severity {worst.label()} >= threshold {fail_on}")
+        sys.exit(2)
+
+    if (worst >= Severity.HIGH and not yes
+            and not click.confirm(f"Severity {worst.label()} found — proceed with install?", default=False)):
+        console.print("[yellow]aborted by user[/]")
+        sys.exit(1)
+
+    if skipped_pkgs:
+        console.print(f"[dim]allowlisted ({len(skipped_pkgs)}):[/] {', '.join(skipped_pkgs)}")
+
+    console.print("[green]scan clean — delegating to pip[/]")
+    sys.exit(pip_wrapper.delegate_to_pip(pip_argv))
 
 
 @main.command()
