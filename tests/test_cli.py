@@ -653,3 +653,48 @@ def test_pip_install_no_specs(runner: CliRunner, isolated_home: Path) -> None:
         result = runner.invoke(cli.main, ["pip", "install", "--upgrade-strategy", "eager"])
     assert result.exit_code == 0
     mock_delegate.assert_called_once()
+
+
+def test_explain_known_rule(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["explain", "NET_IN_SETUP"])
+    assert result.exit_code == 0
+    assert "NET_IN_SETUP" in result.output
+    assert "Severity" in result.output
+    assert "Pattern" in result.output
+
+
+def test_explain_unknown_rule(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["explain", "DOES_NOT_EXIST"])
+    assert result.exit_code == 1
+    assert "no rule" in result.output
+
+
+def test_explain_case_insensitive(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["explain", "net_in_setup"])
+    assert result.exit_code == 0
+    assert "NET_IN_SETUP" in result.output
+
+
+def test_explain_loads_extra_rules(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    rules_file = tmp_path / "extra.yaml"
+    rules_file.write_text(
+        "rules:\n  - id: TEAM_X_RULE\n    severity: medium\n"
+        "    description: Our internal pattern\n    regex: 'team_x_marker'\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(cli.main, ["explain", "TEAM_X_RULE", "--rules", str(rules_file)])
+    assert result.exit_code == 0
+    assert "TEAM_X_RULE" in result.output
+    assert "team_x_marker" in result.output
+
+
+def test_rules_extra_yaml_listed(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    rules_file = tmp_path / "extra.yaml"
+    rules_file.write_text(
+        "rules:\n  - id: TEAM_RULE\n    severity: high\n"
+        "    description: x\n    regex: 'y'\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(cli.main, ["rules", "--rules", str(rules_file)])
+    assert result.exit_code == 0
+    assert "TEAM_RULE" in result.output

@@ -20,6 +20,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from wtfguard.utils import normalize_name as _pep503
+
 logger = logging.getLogger(__name__)
 
 ENV_VAR = "WTFGUARD_ALLOWLIST"
@@ -43,7 +45,8 @@ class Allowlist:
 
 
 def normalize(name: str) -> str:
-    return name.lower().replace("_", "-").strip()
+    """Wrapper around the PEP 503 normalizer for backwards compatibility."""
+    return _pep503(name)
 
 
 def discover_path(start_dir: Path | None = None) -> Path | None:

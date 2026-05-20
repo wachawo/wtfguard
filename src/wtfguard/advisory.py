@@ -23,6 +23,7 @@ from typing import Any
 import requests
 
 from wtfguard.models import Finding, Severity
+from wtfguard.utils import normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ def lookup(name: str, version: str | None, cache: AdvisoryCache | None = None) -
     """Return advisories for the exact (name, version). Empty for unpinned input."""
     if not version:
         return []
-    key = f"{name.lower()}=={version}"
+    key = f"{normalize_name(name)}=={version}"
     target_cache = cache if cache is not None else load_cache()
     cached = target_cache.get(key)
     if cached is not None:

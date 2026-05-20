@@ -58,6 +58,10 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **`wtfguard bench`** — public FP/FN benchmark on bundled golden fixtures
 - [x] **`wtfguard pip install`** — pre-install wrapper around real pip
 - [x] **`wtfguard init`** + **`wtfguard rules`** — starter config and rule catalog
+- [x] **Custom rules** (`--rules <path>` / `WTFGUARD_RULES` env / `[scan].rules` in config)
+- [x] **`[tool.wtfguard]`** section in `pyproject.toml`
+- [x] **PEP 503 name normalization** across cache / allowlist / advisory / lockfile
+- [x] **`wtfguard explain <rule_id>`** — drill into a single heuristic
 
 Not yet done (Phase 2+):
 
@@ -152,6 +156,31 @@ Wrap pip so every install is scanned first:
 ```bash
 wtfguard pip install requests==2.32.0 numpy
 wtfguard pip install -r requirements.txt --fail-on high
+```
+
+Add custom heuristics on top of the bundled set:
+
+```bash
+wtfguard rules --rules ./our-team-rules.yaml
+wtfguard explain TEAM_INTERNAL_RULE
+```
+
+A custom rule file is just a YAML in the same shape as the bundled
+`patterns.yaml`. An entry whose `id` matches a built-in **replaces** the
+built-in — handy for relaxing or tightening a rule for one team.
+
+```yaml
+# our-team-rules.yaml
+rules:
+  - id: NET_IN_SETUP             # override built-in
+    severity: medium             # downgrade from high
+    description: Network call in install-script
+    file_scope: install_script
+    regex: '\b(urlopen|requests\.(get|post))'
+  - id: INTERNAL_DEPRECATED_API  # new rule
+    severity: low
+    description: Use of deprecated internal API
+    regex: 'acme\.legacy\.'
 ```
 
 ## Severity tiers
@@ -337,12 +366,15 @@ Full reference: [`examples/github-action.md`](examples/github-action.md).
 ## Config file
 
 Skip retyping env vars by committing a `wtfguard.toml` at the repo root,
-or a personal `~/.wtfguard/config.toml`:
+a `[tool.wtfguard]` section in your existing `pyproject.toml`, or a
+personal `~/.wtfguard/config.toml`:
 
 ```toml
+# wtfguard.toml — committed to the repo
 [scan]
 jobs = 8
 no_llm = false
+rules = ["our-team-rules.yaml"]
 
 [llm]
 backend = "ollama"
@@ -353,8 +385,19 @@ ollama_url = "http://gpu-host:11434"
 path = ".wtfguardignore"
 ```
 
+Or inside `pyproject.toml`:
+
+```toml
+[tool.wtfguard.scan]
+jobs = 8
+
+[tool.wtfguard.llm]
+backend = "ollama"
+```
+
 Lookup order (first match wins): `WTFGUARD_CONFIG` env, `./wtfguard.toml`,
-`~/.wtfguard/config.toml`. Env vars and CLI flags always win over config.
+`./pyproject.toml` (if it has `[tool.wtfguard]`), `~/.wtfguard/config.toml`.
+Env vars and CLI flags always win over config.
 
 ## Development
 

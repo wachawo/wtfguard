@@ -89,3 +89,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`wtfguard init`** — drops a starter `wtfguard.toml` and
   `.wtfguardignore` in the cwd (or `--dir`). `--force` to overwrite
 - 319 tests, 95.62% line coverage
+- **Custom rules YAML** — `--rules <path>` flag (repeatable) on `rules`,
+  `explain` commands, `WTFGUARD_RULES` env var (os.pathsep-separated),
+  and `[scan].rules` in config. Custom rule id matching a bundled one
+  replaces it — letting teams tighten or relax built-ins. Bad regex /
+  missing file degrade gracefully
+- **`[tool.wtfguard]` in pyproject.toml** — config loader recognises this
+  TOML section in addition to `wtfguard.toml` and `~/.wtfguard/config.toml`.
+  Discovery order: `WTFGUARD_CONFIG` env, `./wtfguard.toml`,
+  `./pyproject.toml` (if it has the section), then home
+- **PEP 503 name normalization** — new `wtfguard.utils.normalize_name`
+  collapses runs of `_`, `-`, `.` to a single dash and lowercases.
+  Single source of truth used by `allowlist`, `lockfile`, `installed`,
+  and `advisory` lookup keys
+- **`wtfguard explain <rule_id>`** — print a rule's id, severity, scope,
+  regex, and description in a Rich panel. Case-insensitive id matching
+- 346 tests, 95.57% line coverage

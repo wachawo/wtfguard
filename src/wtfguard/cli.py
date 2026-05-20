@@ -292,6 +292,35 @@ def tip() -> None:
     console.print(Panel(t.text, title=f"[bold]{t.level}[/bold]", border_style="cyan"))
 
 
+@main.command()
+@click.argument("rule_id")
+@click.option("--rules", "extra_rules", type=click.Path(path_type=Path), multiple=True)
+def explain(rule_id: str, extra_rules: tuple[Path, ...]) -> None:
+    """Print everything we know about a single heuristic rule."""
+    loaded = heuristics.load_rules(extra_paths=list(extra_rules) or load_env_rules())
+    matches = [r for r in loaded if r.id.lower() == rule_id.lower()]
+    if not matches:
+        console.print(f"[red]no rule with id[/] {rule_id}")
+        sys.exit(1)
+    rule = matches[0]
+    color = SEVERITY_COLOR.get(rule.severity, "white")
+    body = (
+        f"[bold]ID:[/]          {rule.id}\n"
+        f"[bold]Severity:[/]    [{color}]{rule.severity.label()}[/]\n"
+        f"[bold]File scope:[/] {rule.file_scope}\n"
+        f"[bold]Pattern:[/]     {rule.regex.pattern}\n\n"
+        f"{rule.description}"
+    )
+    console.print(Panel(body, title=f"[bold]{rule.id}[/]", border_style=color))
+
+
+def load_env_rules() -> list[Path]:
+    raw = os.getenv("WTFGUARD_RULES", "").strip()
+    if not raw:
+        return []
+    return [Path(p) for p in raw.split(os.pathsep) if p.strip()]
+
+
 @main.command(name="bench")
 @click.option("--format", "fmt", type=click.Choice(["text", "markdown", "json"]), default="text")
 @click.option("--golden-dir", "golden_dir", type=click.Path(path_type=Path), default=None,
@@ -310,9 +339,11 @@ def bench_cmd(fmt: str, golden_dir: Path | None) -> None:
 
 @main.command(name="rules")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
-def rules_cmd(fmt: str) -> None:
+@click.option("--rules", "extra_rules", type=click.Path(path_type=Path), multiple=True,
+              help="Extra rules YAML files (can be passed multiple times)")
+def rules_cmd(fmt: str, extra_rules: tuple[Path, ...]) -> None:
     """List every heuristic rule loaded from patterns.yaml."""
-    loaded = heuristics.load_rules()
+    loaded = heuristics.load_rules(extra_paths=list(extra_rules) or load_env_rules())
     if fmt == "json":
         payload = [
             {

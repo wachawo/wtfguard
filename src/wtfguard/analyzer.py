@@ -20,11 +20,12 @@ DEFAULT_HEURISTIC_CONFIDENCE = 0.9
 
 @dataclass
 class AnalysisOptions:
-    use_llm:      bool = True
-    use_cache:    bool = True
-    use_advisory: bool = True
-    cache_path:   Path | None = None
-    work_dir:     Path | None = None
+    use_llm:        bool = True
+    use_cache:      bool = True
+    use_advisory:   bool = True
+    cache_path:     Path | None = None
+    work_dir:       Path | None = None
+    extra_rules:    list[Path] | None = None
 
 
 def analyze_package(
@@ -42,7 +43,7 @@ def analyze_package(
     work_dir = opts.work_dir or Path(tempfile.mkdtemp(prefix="wtfguard-"))
 
     new_release, new_root = pypi.fetch_and_extract(name, version, work_dir / "new")
-    rules = heuristics.load_rules()
+    rules = heuristics.load_rules(extra_paths=opts.extra_rules)
 
     if base_version is None:
         verdict = analyze_snapshot(name, new_release.version, new_root, rules, opts)

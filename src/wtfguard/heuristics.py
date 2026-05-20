@@ -37,13 +37,39 @@ class Rule:
         return False
 
 
-def load_rules(yaml_path: Path | None = None) -> list[Rule]:
-    """Load heuristic rules from the bundled patterns.yaml (or a custom path)."""
-    if yaml_path is None:
-        yaml_path = Path(__file__).parent / "data" / "patterns.yaml"
+DEFAULT_RULES_PATH = Path(__file__).parent / "data" / "patterns.yaml"
 
-    with yaml_path.open("r", encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh)
+
+def load_rules(yaml_path: Path | None = None, extra_paths: list[Path] | None = None) -> list[Rule]:
+    """Load bundled patterns.yaml plus any extra YAML files of the same shape.
+
+    Extra rules with an id that matches a bundled rule replace it — letting
+    users tighten or relax built-in patterns. Extra rules with new ids are
+    appended.
+    """
+    base_path = yaml_path or DEFAULT_RULES_PATH
+    rules = read_rules_file(base_path)
+    by_id: dict[str, Rule] = {r.id: r for r in rules}
+
+    for extra in extra_paths or []:
+        for rule in read_rules_file(extra):
+            if rule.id in by_id:
+                logger.info(f"Overriding rule {rule.id} from {extra}")
+            by_id[rule.id] = rule
+
+    return list(by_id.values())
+
+
+def read_rules_file(yaml_path: Path) -> list[Rule]:
+    if not yaml_path.is_file():
+        logger.warning(f"Rules file missing: {yaml_path}")
+        return []
+    try:
+        with yaml_path.open("r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning(f"Cannot read rules {yaml_path}: {type(exc).__name__}: {exc}")
+        return []
 
     rules: list[Rule] = []
     for entry in raw.get("rules", []):
@@ -58,7 +84,7 @@ def load_rules(yaml_path: Path | None = None) -> list[Rule]:
                 )
             )
         except (KeyError, re.error) as exc:
-            logger.warning(f"Skipping invalid rule {entry.get('id', '?')}: {type(exc).__name__}: {exc}")
+            logger.warning(f"Skipping invalid rule {entry.get('id', '?')} from {yaml_path.name}: {type(exc).__name__}: {exc}")
     return rules
 
 

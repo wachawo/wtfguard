@@ -12,6 +12,8 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
+from wtfguard.utils import normalize_name
+
 logger = logging.getLogger(__name__)
 
 REQUIREMENTS_EXTENSIONS = frozenset({".txt", ".in"})
@@ -136,11 +138,11 @@ def parse_pipfile_lock(text: str) -> list[tuple[str, str | None]]:
 
 
 def dedupe_packages(items: Iterable[tuple[str, str | None]]) -> list[tuple[str, str | None]]:
-    """Return items in input order with case-insensitive name+version duplicates removed."""
+    """Return items in input order with PEP 503 name+version duplicates removed."""
     seen: set[tuple[str, str | None]] = set()
     out: list[tuple[str, str | None]] = []
     for name, version in items:
-        key = (name.lower().replace("_", "-"), version)
+        key = (normalize_name(name), version)
         if key in seen:
             continue
         seen.add(key)

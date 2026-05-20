@@ -153,3 +153,77 @@ def test_apply_to_env_does_not_override_existing(monkeypatch: pytest.MonkeyPatch
     )
     apply_to_env(cfg)
     assert os.environ["WTFGUARD_LLM_BACKEND"] == "claude"
+
+
+def test_pyproject_with_tool_wtfguard_section(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "[build-system]\nrequires = [\"setuptools\"]\n\n"
+        "[tool.wtfguard.scan]\njobs = 16\n\n"
+        "[tool.wtfguard.llm]\nbackend = \"ollama\"\nmodel = \"qwen2.5-coder:32b\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WTFGUARD_CONFIG", raising=False)
+    cfg = load()
+    assert cfg.scan.jobs == 16
+    assert cfg.llm.backend == "ollama"
+    assert cfg.llm.model == "qwen2.5-coder:32b"
+    assert cfg.source == pyproject
+
+
+def test_pyproject_without_tool_wtfguard_section_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "[build-system]\nrequires = [\"setuptools\"]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WTFGUARD_CONFIG", raising=False)
+    cfg = load()
+    # No wtfguard.toml and pyproject lacks [tool.wtfguard] — returns empty
+    assert cfg.source is None
+    assert cfg.scan.jobs is None
+
+
+def test_wtfguard_toml_preferred_over_pyproject(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.wtfguard.scan]\njobs = 99\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "wtfguard.toml").write_text(
+        "[scan]\njobs = 4\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WTFGUARD_CONFIG", raising=False)
+    cfg = load()
+    assert cfg.scan.jobs == 4
+    assert cfg.source == tmp_path / "wtfguard.toml"
+
+
+def test_scan_rules_string_becomes_list(tmp_path: Path) -> None:
+    f = tmp_path / "wtfguard.toml"
+    f.write_text("[scan]\nrules = \"path/to/rules.yaml\"\n", encoding="utf-8")
+    cfg = load(f)
+    assert cfg.scan.rules == ["path/to/rules.yaml"]
+
+
+def test_scan_rules_list_preserved(tmp_path: Path) -> None:
+    f = tmp_path / "wtfguard.toml"
+    f.write_text("[scan]\nrules = [\"a.yaml\", \"b.yaml\"]\n", encoding="utf-8")
+    cfg = load(f)
+    assert cfg.scan.rules == ["a.yaml", "b.yaml"]
+
+
+def test_apply_to_env_sets_wtfguard_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("WTFGUARD_RULES", raising=False)
+    from wtfguard.config import AllowlistSection, LlmSection, ScanSection
+    cfg = Config(
+        scan=ScanSection(rules=["a.yaml", "b.yaml"]),
+        llm=LlmSection(),
+        allowlist=AllowlistSection(),
+    )
+    apply_to_env(cfg)
+    assert "a.yaml" in os.environ["WTFGUARD_RULES"]
+    assert "b.yaml" in os.environ["WTFGUARD_RULES"]

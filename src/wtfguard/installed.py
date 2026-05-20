@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from importlib import metadata
 
+from wtfguard.utils import normalize_name
+
 logger = logging.getLogger(__name__)
 
 STDLIB_DISTRIBUTIONS = frozenset({"pip", "setuptools", "wheel", "packaging"})
@@ -36,7 +38,7 @@ def list_installed(include_stdlib: bool = False) -> list[InstalledPackage]:
 
         if not name:
             continue
-        normalized = name.lower().replace("_", "-")
+        normalized = normalize_name(name)
         if normalized in seen:
             continue
         seen.add(normalized)

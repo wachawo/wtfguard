@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 
 ENV_VAR = "WTFGUARD_CONFIG"
 LOCAL_NAME = "wtfguard.toml"
+PYPROJECT_NAME = "pyproject.toml"
+PYPROJECT_KEY = "tool"
+PYPROJECT_SUBKEY = "wtfguard"
 DEFAULT_PATH = Path.home() / ".wtfguard" / "config.toml"
 
 
@@ -48,6 +51,7 @@ class ScanSection:
     jobs:     int | None = None
     no_llm:   bool | None = None
     no_cache: bool | None = None
+    rules:    list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -72,20 +76,37 @@ class Config:
 
 
 def discover_path(start_dir: Path | None = None) -> Path | None:
+    """Find a config file. Order: WTFGUARD_CONFIG env, ./wtfguard.toml,
+    ./pyproject.toml (if it has [tool.wtfguard]), ~/.wtfguard/config.toml.
+    """
     env_value = os.getenv(ENV_VAR)
     if env_value:
         env_path = Path(env_value)
         if env_path.is_file():
             return env_path
 
-    local = (start_dir or Path.cwd()) / LOCAL_NAME
+    base = start_dir or Path.cwd()
+    local = base / LOCAL_NAME
     if local.is_file():
         return local
+
+    pyproject = base / PYPROJECT_NAME
+    if pyproject.is_file() and pyproject_has_wtfguard_section(pyproject):
+        return pyproject
 
     if DEFAULT_PATH.is_file():
         return DEFAULT_PATH
 
     return None
+
+
+def pyproject_has_wtfguard_section(path: Path) -> bool:
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    tool = data.get(PYPROJECT_KEY)
+    return isinstance(tool, dict) and isinstance(tool.get(PYPROJECT_SUBKEY), dict)
 
 
 def load(path: Path | None = None) -> Config:
@@ -100,6 +121,10 @@ def load(path: Path | None = None) -> Config:
         logger.warning(f"Cannot parse {resolved}: {type(exc).__name__}: {exc}")
         return Config()
 
+    if resolved.name == PYPROJECT_NAME:
+        tool = data.get(PYPROJECT_KEY) or {}
+        data = (tool.get(PYPROJECT_SUBKEY) or {}) if isinstance(tool, dict) else {}
+
     return Config(
         scan=parse_scan(data.get("scan") or {}),
         llm=parse_llm(data.get("llm") or {}),
@@ -109,10 +134,17 @@ def load(path: Path | None = None) -> Config:
 
 
 def parse_scan(data: dict[str, Any]) -> ScanSection:
+    rules_value = data.get("rules")
+    rules_list: list[str] | None = None
+    if isinstance(rules_value, str):
+        rules_list = [rules_value]
+    elif isinstance(rules_value, list):
+        rules_list = [str(x) for x in rules_value if isinstance(x, str)]
     return ScanSection(
         jobs=int(data["jobs"]) if isinstance(data.get("jobs"), int) else None,
         no_llm=bool(data.get("no_llm")) if "no_llm" in data else None,
         no_cache=bool(data.get("no_cache")) if "no_cache" in data else None,
+        rules=rules_list,
     )
 
 
@@ -151,3 +183,5 @@ def apply_to_env(config: Config) -> None:
         os.environ["ANTHROPIC_API_KEY"] = config.llm.anthropic_api_key
     if config.allowlist.path and "WTFGUARD_ALLOWLIST" not in os.environ:
         os.environ["WTFGUARD_ALLOWLIST"] = config.allowlist.path
+    if config.scan.rules and "WTFGUARD_RULES" not in os.environ:
+        os.environ["WTFGUARD_RULES"] = os.pathsep.join(config.scan.rules)
