@@ -14,7 +14,18 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from wtfguard import __version__, achievements, allowlist, analyzer, installed, llm, state, tips
+from wtfguard import (
+    __version__,
+    achievements,
+    allowlist,
+    analyzer,
+    concurrency,
+    installed,
+    llm,
+    sarif,
+    state,
+    tips,
+)
 from wtfguard.models import Severity, Verdict
 
 LOG_FORMAT = "%(asctime)s.%(msecs)03d [%(levelname)s]: (%(name)s) %(message)s"
@@ -120,7 +131,17 @@ def scan(
 @click.option("--no-cache", is_flag=True)
 @click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None,
               help="Path to allowlist file (default: auto-discover .wtfguardignore / WTFGUARD_ALLOWLIST / ~/.wtfguard/allowlist.txt)")
-def scan_requirements(requirements_file: Path, no_llm: bool, no_cache: bool, allowlist_path: Path | None) -> None:
+@click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
+              help="Write SARIF 2.1.0 report to this path")
+@click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
+def scan_requirements(
+    requirements_file: Path,
+    no_llm: bool,
+    no_cache: bool,
+    allowlist_path: Path | None,
+    sarif_path: Path | None,
+    jobs: int,
+) -> None:
     """Scan every pinned package in a requirements.txt-style file."""
     packages = parse_requirements_file(requirements_file)
     if not packages:
@@ -129,29 +150,24 @@ def scan_requirements(requirements_file: Path, no_llm: bool, no_cache: bool, all
 
     rules = allowlist.load(allowlist_path)
     options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
-    summary: list[Verdict] = []
-    worst = Severity.CLEAN
-    skipped: list[str] = []
 
+    to_scan: list[tuple[str, str | None]] = []
+    skipped: list[str] = []
     for name, version in packages:
         if rules.allows(name, version):
             console.print(f"[dim]allowlisted[/dim] {name}=={version or 'latest'}")
             skipped.append(f"{name}=={version or 'latest'}")
             continue
-        console.print(f"[bold]scanning[/bold] {name}=={version or 'latest'}")
-        try:
-            verdict = analyzer.analyze_package(name, version, None, options)
-        except LookupError as exc:
-            console.print(f"  [red]skip:[/red] {exc}")
-            continue
-        summary.append(verdict)
-        worst = Severity(max(int(worst), int(verdict.severity)))
-        render_verdict(verdict, compact=True)
+        to_scan.append((name, version))
+
+    summary, worst = run_scan_batch(to_scan, options, jobs)
 
     console.print()
     render_requirements_summary(summary, worst)
     if skipped:
         console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
+    if sarif_path is not None:
+        write_sarif(summary, sarif_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -161,12 +177,17 @@ def scan_requirements(requirements_file: Path, no_llm: bool, no_cache: bool, all
 @click.option("--include-stdlib", is_flag=True, help="Include pip / setuptools / wheel / packaging")
 @click.option("--allowlist", "allowlist_path", type=click.Path(path_type=Path), default=None)
 @click.option("--max-packages", type=int, default=0, help="Cap scan at N packages (0 = no cap)")
+@click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
+              help="Write SARIF 2.1.0 report to this path")
+@click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_installed(
     no_llm: bool,
     no_cache: bool,
     include_stdlib: bool,
     allowlist_path: Path | None,
     max_packages: int,
+    sarif_path: Path | None,
+    jobs: int,
 ) -> None:
     """Scan every package installed in the current Python environment."""
     packages = installed.list_installed(include_stdlib=include_stdlib)
@@ -179,31 +200,25 @@ def scan_installed(
 
     rules = allowlist.load(allowlist_path)
     options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
-    summary: list[Verdict] = []
-    worst = Severity.CLEAN
-    skipped: list[str] = []
 
-    console.print(f"[bold]scanning {len(packages)} installed packages[/bold]")
+    to_scan: list[tuple[str, str | None]] = []
+    skipped: list[str] = []
     for pkg in packages:
         spec = f"{pkg.name}=={pkg.version}"
         if rules.allows(pkg.name, pkg.version):
             skipped.append(spec)
             continue
-        console.print(f"  {spec}")
-        try:
-            verdict = analyzer.analyze_package(pkg.name, pkg.version, None, options)
-        except LookupError as exc:
-            console.print(f"    [red]skip:[/red] {exc}")
-            continue
-        summary.append(verdict)
-        worst = Severity(max(int(worst), int(verdict.severity)))
-        if verdict.severity >= Severity.MEDIUM:
-            render_verdict(verdict, compact=True)
+        to_scan.append((pkg.name, pkg.version))
+
+    console.print(f"[bold]scanning {len(to_scan)} packages (jobs={jobs})[/bold]")
+    summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM)
 
     console.print()
     render_requirements_summary(summary, worst)
     if skipped:
         console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
+    if sarif_path is not None:
+        write_sarif(summary, sarif_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -250,6 +265,48 @@ def doctor() -> None:
     console.print("state:          ~/.wtfguard/state.json")
     console.print(f"LLM available:  [{'green' if llm.is_available() else 'yellow'}]{llm.is_available()}[/]")
     console.print(f"LLM model:      {llm.DEFAULT_MODEL}")
+
+
+def run_scan_batch(
+    items: list[tuple[str, str | None]],
+    options: analyzer.AnalysisOptions,
+    jobs: int,
+    only_show_above: Severity = Severity.CLEAN,
+) -> tuple[list[Verdict], Severity]:
+    """Concurrently analyze each (name, version) tuple. Returns verdicts + worst severity."""
+    if not items:
+        return [], Severity.CLEAN
+
+    def one(item: tuple[str, str | None]) -> Verdict | None:
+        name, version = item
+        try:
+            return analyzer.analyze_package(name, version, None, options)
+        except LookupError as exc:
+            console.print(f"  [red]skip:[/red] {name}=={version or 'latest'} — {exc}")
+            return None
+
+    def on_error(item: tuple[str, str | None], exc: BaseException) -> Verdict | None:
+        name, version = item
+        console.print(f"  [red]error:[/red] {name}=={version or 'latest'} — {type(exc).__name__}: {exc}")
+        return None
+
+    raw = concurrency.map_parallel(one, items, jobs=max(1, jobs), on_error=on_error)
+    verdicts: list[Verdict] = [v for v in raw if v is not None]
+
+    worst = Severity.CLEAN
+    for verdict in verdicts:
+        worst = Severity(max(int(worst), int(verdict.severity)))
+        if verdict.severity >= only_show_above:
+            render_verdict(verdict, compact=True)
+    return verdicts, worst
+
+
+def write_sarif(verdicts: list[Verdict], path: Path) -> None:
+    report = sarif.build_report(verdicts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2, ensure_ascii=False)
+    console.print(f"[green]SARIF report written:[/] {path}")
 
 
 def parse_package_spec(spec: str) -> tuple[str, str | None]:

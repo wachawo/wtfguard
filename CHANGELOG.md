@@ -32,3 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   groups suggesting install-time execution
 - `action.yml` — reusable GitHub Action (`uses: wachawo/wtfguard@main`)
   with `requirements-file` / `scan-installed` / `fail-on` inputs
+- **SARIF 2.1.0 output** (`--sarif <path>`) — emits a report consumable
+  by GitHub Code Scanning, GitLab SAST, Azure DevOps, and any tool that
+  speaks SARIF. Action gained matching `sarif:` input
+- **Concurrent scanning** (`--jobs N`, default 4) — `scan-requirements`
+  and `scan-installed` now use a thread pool. Order of results is stable
+- **Network retry/backoff** — PyPI requests automatically retry on
+  429 / 5xx and transient ConnectionError / Timeout (3 attempts, exponential
+  backoff). Last response is returned if all retries return 5xx
+- 186 tests, 95% line coverage

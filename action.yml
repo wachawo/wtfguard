@@ -30,6 +30,14 @@ inputs:
     description: 'Anthropic API key to enable LLM audit (optional)'
     required: false
     default: ''
+  sarif:
+    description: 'Write SARIF 2.1.0 report to this path (for GitHub Code Scanning upload)'
+    required: false
+    default: ''
+  jobs:
+    description: 'Concurrent scan workers (default 4)'
+    required: false
+    default: '4'
 
 outputs:
   worst-severity:
@@ -50,9 +58,10 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
       run: |
         set -e
-        ARGS=""
+        ARGS="--jobs ${{ inputs.jobs }}"
         [ "${{ inputs.no-llm }}" = "true" ] && ARGS="$ARGS --no-llm"
         [ -n "${{ inputs.allowlist }}" ] && ARGS="$ARGS --allowlist ${{ inputs.allowlist }}"
+        [ -n "${{ inputs.sarif }}" ] && ARGS="$ARGS --sarif ${{ inputs.sarif }}"
 
         if [ "${{ inputs.scan-installed }}" = "true" ]; then
           wtfguard scan-installed $ARGS

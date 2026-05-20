@@ -44,6 +44,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] Allowlist via `.wtfguardignore` / `WTFGUARD_ALLOWLIST` / `~/.wtfguard/allowlist.txt`
 - [x] `pyproject.toml` TOML scanner (build hooks, suspicious requires, entry-points)
 - [x] GitHub Action template (`action.yml`)
+- [x] SARIF 2.1.0 report output for GitHub Code Scanning / GitLab SAST
+- [x] Concurrent scanning with `--jobs N` thread pool
+- [x] PyPI retry/backoff on 429 / 5xx / transient connection errors
 
 Not yet done (Phase 2+):
 
@@ -261,6 +264,20 @@ Or audit everything installed after a `pip install -e .`:
 - uses: wachawo/wtfguard@main
   with:
     scan-installed: 'true'
+    jobs: '8'
+```
+
+Emit SARIF and upload to GitHub Code Scanning:
+
+```yaml
+- uses: wachawo/wtfguard@main
+  with:
+    requirements-file: requirements.txt
+    sarif: wtfguard.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  if: always()
+  with:
+    sarif_file: wtfguard.sarif
 ```
 
 Full reference: [`examples/github-action.md`](examples/github-action.md).
