@@ -122,3 +122,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AnalysisOptions.use_metadata` toggle (default true). conftest autouse
   fixture stubs the metadata fetcher so tests stay offline
 - 378 tests, 94.39% line coverage
+- **Typosquat detection** — fifth detection axis. New `wtfguard.typosquat`
+  module compares package name against a bundled top-~100 PyPI list
+  (`src/wtfguard/data/popular_pypi.txt`) via Levenshtein. Names within
+  edit distance 1 of a popular package fire `TYPOSQUAT_CANDIDATE` at
+  **high** severity, distance 2 at **medium**. Exact matches are never
+  flagged. Short names (≤4 chars) are skipped to avoid noise. Toggle
+  via `AnalysisOptions.use_typosquat`
+- **Markdown report** (`--markdown <path>`) — third report format
+  alongside SARIF and HTML. CommonMark with collapsible `<details>` per
+  package and severity-emoji table for fast skim. Designed to be pasted
+  into a GitHub PR comment
+- **`wtfguard watch <file>`** — file-watching dev loop. Polls mtime
+  (no inotify dependency), re-runs scan on every change. Ideal for
+  editing `requirements.txt` / `poetry.lock` with the verdict open in
+  another pane. Handles Ctrl-C gracefully, clamps interval to 30s,
+  catches callback exceptions
+- 416 tests, 93.92% line coverage

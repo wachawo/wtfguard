@@ -28,11 +28,13 @@ from wtfguard import (
     installed,
     llm,
     lockfile,
+    markdown_report,
     pip_wrapper,
     pypi_signals,
     sarif,
     state,
     tips,
+    watch,
 )
 from wtfguard.cache import VerdictCache
 from wtfguard.models import Severity, Verdict
@@ -146,6 +148,8 @@ def scan(
               help="Write SARIF 2.1.0 report to this path")
 @click.option("--html", "html_path", type=click.Path(path_type=Path), default=None,
               help="Write standalone HTML report to this path")
+@click.option("--markdown", "markdown_path", type=click.Path(path_type=Path), default=None,
+              help="Write Markdown report (for PR comments)")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_requirements(
@@ -155,6 +159,7 @@ def scan_requirements(
     allowlist_path: Path | None,
     sarif_path: Path | None,
     html_path: Path | None,
+    markdown_path: Path | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -194,6 +199,8 @@ def scan_requirements(
         write_sarif(summary, sarif_path)
     if html_path is not None:
         write_html(summary, skipped, html_path)
+    if markdown_path is not None:
+        write_markdown(summary, skipped, markdown_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -207,6 +214,8 @@ def scan_requirements(
               help="Write SARIF 2.1.0 report to this path")
 @click.option("--html", "html_path", type=click.Path(path_type=Path), default=None,
               help="Write standalone HTML report to this path")
+@click.option("--markdown", "markdown_path", type=click.Path(path_type=Path), default=None,
+              help="Write Markdown report (for PR comments)")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_installed(
@@ -217,6 +226,7 @@ def scan_installed(
     max_packages: int,
     sarif_path: Path | None,
     html_path: Path | None,
+    markdown_path: Path | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -256,6 +266,8 @@ def scan_installed(
         write_sarif(summary, sarif_path)
     if html_path is not None:
         write_html(summary, skipped, html_path)
+    if markdown_path is not None:
+        write_markdown(summary, skipped, markdown_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -292,6 +304,37 @@ def tip() -> None:
     """Print one random security tip."""
     t = tips.random_tip()
     console.print(Panel(t.text, title=f"[bold]{t.level}[/bold]", border_style="cyan"))
+
+
+@main.command(name="watch")
+@click.argument("target", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--interval", type=float, default=1.0, help="Poll interval in seconds (default 1.0)")
+@click.option("--no-llm", is_flag=True)
+@click.option("--no-cache", is_flag=True)
+def watch_cmd(target: Path, interval: float, no_llm: bool, no_cache: bool) -> None:
+    """Watch a requirements / lockfile and re-scan on every change.
+
+    Polls the file's mtime. Ideal for editor integration during dependency
+    upgrades — save the file, see the new verdict in your terminal.
+    """
+    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
+
+    def re_scan(path: Path) -> None:
+        console.print(f"[bold]change detected:[/] {path}")
+        packages = lockfile.dedupe_packages(lockfile.parse_file(path))
+        if not packages:
+            console.print("[yellow]no packages parsed[/]")
+            return
+        items = [(n, v) for n, v in packages]
+        summary, worst = run_scan_batch(items, options, jobs=4, only_show_above=Severity.MEDIUM)
+        render_requirements_summary(summary, worst)
+
+    re_scan(target)
+    console.print(f"[dim]watching {target} (interval {interval}s) — Ctrl-C to stop[/]")
+    try:
+        watch.watch_file(target, on_change=re_scan, interval=interval)
+    except KeyboardInterrupt:
+        console.print("[yellow]watch stopped[/]")
 
 
 @main.command()
@@ -660,6 +703,12 @@ def write_html(verdicts: list[Verdict], allowlisted: list[str], path: Path) -> N
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html_report.render(verdicts, allowlisted), encoding="utf-8")
     console.print(f"[green]HTML report written:[/] {path}")
+
+
+def write_markdown(verdicts: list[Verdict], allowlisted: list[str], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(markdown_report.render(verdicts, allowlisted), encoding="utf-8")
+    console.print(f"[green]Markdown report written:[/] {path}")
 
 
 def parse_package_spec(spec: str) -> tuple[str, str | None]:

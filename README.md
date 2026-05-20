@@ -65,6 +65,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **OSV.dev batch lookup** — single HTTP call for N specs (was N sequential)
 - [x] **PyPI metadata signals** — `LOW_RELEASE_COUNT`, `BRAND_NEW_PACKAGE`, `STALE_PACKAGE`, ...
 - [x] **`wtfguard show <package>`** — read-only metadata report card without download
+- [x] **Typosquat detection** — Levenshtein distance against curated top-PyPI list
+- [x] **Markdown report** (`--markdown <path>`) — for PR comments
+- [x] **`wtfguard watch <file>`** — file-watching dev loop
 
 Not yet done (Phase 2+):
 
@@ -242,20 +245,20 @@ with the package name+version. Every report tightens the rules.
 ## Architecture
 
 ```
-   heuristics      OSV.dev DB     PyPI metadata    LLM (optional)
-   regex+AST       CVE / GHSA     age, releases    Claude / Ollama
-   ────────►       ────────►      ──────────►      ──────────►
-        │              │              │                  │
-        └──────────────┴──────────────┴──────────────────┘
+   heuristics    OSV.dev DB   PyPI metadata   typosquat    LLM (opt.)
+   regex+AST     CVE / GHSA   age, releases   Levenshtein  Claude/Ollama
+   ────────►     ────────►    ──────────►     ──────────►  ──────────►
+        │            │             │              │             │
+        └────────────┴─────────────┴──────────────┴─────────────┘
                               ▼
                   severity combiner (confidence-floored)
                               ▼
                   SQLite verdict cache + JSON advisory/metadata cache
                               ▼
-                  console / JSON / SARIF / HTML
+            console / JSON / SARIF / HTML / Markdown
 ```
 
-Four detection axes, each independent — the failure of any one does not
+Five detection axes, each independent — the failure of any one does not
 block the others.
 
 - `wtfguard.pypi` — fetch and extract release archives
