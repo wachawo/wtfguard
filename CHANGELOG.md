@@ -220,3 +220,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can add wtfguard via a one-line `pre-commit-config.yaml` referencing
   this repository
 - 555 tests, 92.88% line coverage
+- **PyPI sdist SHA256 verification** — `pypi.download_file` now compares
+  the downloaded artifact against the `info.digests.sha256` PyPI publishes
+  in its JSON metadata. Raises `OSError` on mismatch. Catches MITM
+  tampering and wrong-mirror configurations where the body and metadata
+  diverge. Releases without a published sha256 skip verification
+- **`LOW_DOWNLOAD_VOLUME` signal** — new optional `pypi_signals` rule.
+  Pulls last-30-day download count from `pypistats.org/api/packages/...`,
+  fires LOW when below 1000 downloads/month — typosquat / abandoned /
+  brand-new indicator
+- **`wtfguard cache` command group** — `stats` shows sizes of the
+  SQLite verdict cache + JSON advisory + JSON metadata caches.
+  `clear --verdict/--advisory/--metadata/--all --yes` deletes them
+- **`wtfguard completion {bash,zsh,fish}`** — emits shell-completion
+  scripts via Click's `_WTFGUARD_COMPLETE` env var. Pipe into your
+  shell's completion directory for tab-completion of subcommands and
+  flags
+- 579 tests, 92.73% line coverage

@@ -82,6 +82,10 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **`wtfguard refresh-popular`** — auto-refresh the typosquat list from live PyPI stats
 - [x] **`wtfguard pre-commit-config`** — generate a starter `.pre-commit-config.yaml`
 - [x] **Native pre-commit hooks** — bundled `.pre-commit-hooks.yaml` for one-line install
+- [x] **PyPI sdist SHA256 verification** — catches MITM / wrong-mirror tampering
+- [x] **`LOW_DOWNLOAD_VOLUME` signal** — pypistats-backed indicator for niche / abandoned packages
+- [x] **`wtfguard cache stats / clear`** — admin utilities for the three cache files
+- [x] **Shell completion** for bash / zsh / fish via `wtfguard completion <shell>`
 
 Not yet done (Phase 2+):
 

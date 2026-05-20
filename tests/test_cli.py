@@ -826,6 +826,46 @@ def test_pre_commit_config_with_requirements(runner: CliRunner, isolated_home: P
     assert "wtfguard-scan-requirements" in result.output
 
 
+def test_cache_stats_no_files(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["cache", "stats"])
+    assert result.exit_code == 0
+    assert "verdict cache" in result.output
+
+
+def test_cache_stats_json(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["cache", "stats", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "verdict_cache" in payload
+    assert "advisory_cache" in payload
+    assert "metadata_cache" in payload
+
+
+def test_cache_clear_no_flags(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["cache", "clear"])
+    assert result.exit_code == 1
+    assert "nothing to clear" in result.output
+
+
+def test_cache_clear_advisory_only(runner: CliRunner, isolated_home: Path) -> None:
+    # Create a fake advisory cache file under the isolated home
+    advisory_path = isolated_home / ".wtfguard" / "advisory-cache.json"
+    advisory_path.parent.mkdir(parents=True, exist_ok=True)
+    advisory_path.write_text("{}", encoding="utf-8")
+
+    # Patch Path.home() so the CLI looks in our tmp dir
+    with patch("wtfguard.cli.Path.home", return_value=isolated_home):
+        result = runner.invoke(cli.main, ["cache", "clear", "--advisory", "--yes"])
+    assert result.exit_code == 0
+    assert not advisory_path.exists()
+
+
+def test_cache_clear_declined(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["cache", "clear", "--all"], input="n\n")
+    assert result.exit_code == 0
+    assert "aborted" in result.output
+
+
 def test_explain_known_rule(runner: CliRunner, isolated_home: Path) -> None:
     result = runner.invoke(cli.main, ["explain", "NET_IN_SETUP"])
     assert result.exit_code == 0

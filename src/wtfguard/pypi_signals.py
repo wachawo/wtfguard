@@ -43,6 +43,10 @@ STALE_DAYS = 730
 LOW_RELEASE_THRESHOLD = 2
 METADATA_TIMEOUT = 10
 
+PYPISTATS_RECENT_URL = "https://pypistats.org/api/packages/{name}/recent"
+LOW_DOWNLOAD_THRESHOLD = 1000  # last_month downloads below this == suspicious
+DOWNLOAD_TIMEOUT = 5
+
 
 @dataclass(frozen=True)
 class PackageMetadata:
@@ -196,6 +200,56 @@ def derive_findings(meta: PackageMetadata, now: datetime | None = None) -> list[
         )
 
     return findings
+
+
+def fetch_download_count(name: str, timeout: int = DOWNLOAD_TIMEOUT) -> int | None:
+    """Last-month download count from pypistats.org, or None on any error.
+
+    Cheap signal: a package nobody downloads is either brand-new, abandoned,
+    or a typosquat candidate. We do not cache here — callers compose this
+    with their own caching layer (we already cache PyPI metadata under
+    pypi-metadata-cache.json, downloads are checked separately).
+    """
+    url = PYPISTATS_RECENT_URL.format(name=name)
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        payload = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning(f"pypistats fetch failed for {name}: {type(exc).__name__}: {exc}")
+        return None
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("last_month")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.isdigit():
+        return int(raw)
+    return None
+
+
+def low_download_finding(name: str, threshold: int = LOW_DOWNLOAD_THRESHOLD) -> list[Finding]:
+    """Optional download-volume probe — returns LOW_DOWNLOAD_VOLUME if appropriate."""
+    if not name:
+        return []
+    count = fetch_download_count(name)
+    if count is None or count >= threshold:
+        return []
+    return [
+        Finding(
+            rule_id="LOW_DOWNLOAD_VOLUME",
+            severity=Severity.LOW,
+            file=f"<metadata:{name}>",
+            line=1,
+            snippet=f"{count} downloads in last 30 days",
+            description=f"Package received only {count} downloads in the last 30 days — niche, abandoned, or typosquat",
+        )
+    ]
 
 
 def days_between(earlier: datetime, later: datetime) -> int:

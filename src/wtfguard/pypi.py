@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """PyPI metadata fetcher and sdist downloader/extractor."""
 
+import hashlib
 import logging
 import tarfile
 import tempfile
@@ -140,7 +141,38 @@ def download_file(release_file: ReleaseFile, dest_dir: Path) -> Path:
             for chunk in resp.iter_content(chunk_size=DOWNLOAD_CHUNK):
                 if chunk:
                     fh.write(chunk)
+
+    if release_file.sha256:
+        verify_sha256(dest, release_file.sha256)
     return dest
+
+
+def verify_sha256(path: Path, expected: str) -> None:
+    """Raise IOError if the file's SHA256 differs from what PyPI advertised.
+
+    PyPI publishes sha256 digests in its JSON metadata. Verifying the
+    downloaded artifact against that digest catches MITM tampering and
+    wrong-mirror configurations where the file body does not match the
+    advertised hash. We do not delete the file — callers may want to
+    inspect it.
+    """
+    digest = sha256_of(path)
+    if digest.lower() != expected.lower():
+        raise OSError(
+            f"sha256 mismatch for {path.name}: expected {expected}, got {digest}"
+        )
+    logger.debug(f"sha256 verified for {path.name}")
+
+
+def sha256_of(path: Path, chunk: int = 1 << 16) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            buf = fh.read(chunk)
+            if not buf:
+                break
+            h.update(buf)
+    return h.hexdigest()
 
 
 def extract_archive(archive: Path, dest_dir: Path) -> Path:

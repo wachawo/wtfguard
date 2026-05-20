@@ -735,6 +735,118 @@ def refresh_popular_cmd(top: int, output_path: Path | None, dry_run: bool) -> No
     console.print(f"[green]wrote[/] {count} names to {target}")
 
 
+@main.group(name="cache")
+def cache_group() -> None:
+    """Inspect and clear the SQLite verdict / JSON advisory / JSON metadata caches."""
+
+
+@cache_group.command(name="stats")
+@click.option("--json", "json_output", is_flag=True)
+def cache_stats(json_output: bool) -> None:
+    """Show cache file sizes and entry counts."""
+    verdict_path = Path.home() / ".wtfguard" / "cache.sqlite"
+    advisory_path = Path.home() / ".wtfguard" / "advisory-cache.json"
+    metadata_path = Path.home() / ".wtfguard" / "pypi-metadata-cache.json"
+
+    stats: dict[str, object] = {
+        "verdict_cache":  cache_file_stats(verdict_path),
+        "advisory_cache": cache_file_stats(advisory_path),
+        "metadata_cache": cache_file_stats(metadata_path),
+    }
+
+    if json_output:
+        print(json.dumps(stats, indent=2, ensure_ascii=False, sort_keys=True))
+        return
+
+    console.print(f"[bold]verdict cache (SQLite):[/]   {format_cache_stats(stats['verdict_cache'])}")
+    console.print(f"[bold]advisory cache (JSON):[/]    {format_cache_stats(stats['advisory_cache'])}")
+    console.print(f"[bold]metadata cache (JSON):[/]    {format_cache_stats(stats['metadata_cache'])}")
+
+
+@cache_group.command(name="clear")
+@click.option("--verdict", "clear_verdict", is_flag=True, help="Clear the SQLite verdict cache")
+@click.option("--advisory", "clear_advisory", is_flag=True, help="Clear the advisory JSON cache")
+@click.option("--metadata", "clear_metadata", is_flag=True, help="Clear the PyPI metadata cache")
+@click.option("--all", "clear_all", is_flag=True, help="Clear all three caches")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirm prompt")
+def cache_clear(clear_verdict: bool, clear_advisory: bool, clear_metadata: bool,
+                clear_all: bool, yes: bool) -> None:
+    """Remove one or more cache files."""
+    targets: list[Path] = []
+    if clear_all or clear_verdict:
+        targets.append(Path.home() / ".wtfguard" / "cache.sqlite")
+    if clear_all or clear_advisory:
+        targets.append(Path.home() / ".wtfguard" / "advisory-cache.json")
+    if clear_all or clear_metadata:
+        targets.append(Path.home() / ".wtfguard" / "pypi-metadata-cache.json")
+
+    if not targets:
+        console.print("[yellow]nothing to clear — pass at least one of --verdict/--advisory/--metadata/--all[/]")
+        sys.exit(1)
+
+    if not yes and not click.confirm(f"Delete {len(targets)} cache file(s)?", default=False):
+        console.print("[yellow]aborted[/]")
+        sys.exit(0)
+
+    removed = 0
+    for path in targets:
+        if path.is_file():
+            path.unlink()
+            removed += 1
+            console.print(f"removed {path}")
+    console.print(f"{removed} cache file(s) removed")
+
+
+def cache_file_stats(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        return {"exists": False, "path": str(path)}
+    size = path.stat().st_size
+    return {"exists": True, "path": str(path), "size_bytes": size}
+
+
+def format_cache_stats(stats: object) -> str:
+    if not isinstance(stats, dict):
+        return "(unknown)"
+    if not stats.get("exists"):
+        return f"[dim]absent[/] ({stats.get('path')})"
+    size = int(stats.get("size_bytes", 0) or 0)
+    return f"{format_size(size):>10}  {stats.get('path')}"
+
+
+def format_size(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    f = float(n) / 1024
+    if f < 1024:
+        return f"{f:.1f} KB"
+    f /= 1024
+    if f < 1024:
+        return f"{f:.1f} MB"
+    return f"{f / 1024:.1f} GB"
+
+
+@main.command(name="completion")
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+def completion_cmd(shell: str) -> None:
+    """Print a shell-completion script for SHELL (bash | zsh | fish).
+
+    Pipe the output into a file in your shell's completion directory:
+
+        wtfguard completion bash > ~/.local/share/bash-completion/completions/wtfguard
+        wtfguard completion zsh  > ~/.zsh/completions/_wtfguard
+        wtfguard completion fish > ~/.config/fish/completions/wtfguard.fish
+    """
+    instruction = f"_WTFGUARD_COMPLETE={shell}_source wtfguard"
+    import subprocess as _subprocess
+    env = dict(os.environ)
+    env["_WTFGUARD_COMPLETE"] = f"{shell}_source"
+    result = _subprocess.run(["wtfguard"], env=env, capture_output=True, text=True, check=False)
+    if result.returncode != 0 or not result.stdout:
+        console.print(f"[red]could not generate completion via Click; run manually:[/] {instruction}")
+        sys.exit(1)
+    print(result.stdout)
+
+
 @main.command(name="pre-commit-config")
 @click.option("--include-requirements", is_flag=True,
               help="Include a scan-requirements hook as well")
