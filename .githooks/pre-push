@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# wtfguard pre-push hook — runs the same gates as GitHub Actions CI.
+# Enable once with:  git config core.hooksPath .githooks
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+PY="${WTFGUARD_DEV_PY:-.venv/bin/python}"
+if [[ ! -x "$PY" ]]; then
+    echo "pre-push: no $PY — set WTFGUARD_DEV_PY or create .venv first" >&2
+    exit 1
+fi
+
+echo "[pre-push] ruff"
+"$PY" -m ruff check src tests
+
+echo "[pre-push] mypy"
+"$PY" -m mypy src
+
+echo "[pre-push] pytest"
+"$PY" -m pytest -ra --cov=wtfguard --cov-fail-under=80 -q
+
+echo "[pre-push] all gates passed"

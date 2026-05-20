@@ -16,10 +16,29 @@ from wtfguard.system_env import (
 )
 
 
-def test_is_in_virtualenv_during_tests() -> None:
-    # pytest runs inside our .venv, so we expect True. The flag flips on real
-    # system Python, but this test asserts behaviour in the dev/test setup.
+def test_is_in_virtualenv_when_prefix_diverges(monkeypatch) -> None:
+    # PEP 405: sys.prefix != sys.base_prefix inside a venv
+    monkeypatch.setattr("sys.prefix", "/venv")
+    monkeypatch.setattr("sys.base_prefix", "/usr")
+    monkeypatch.delattr("sys.real_prefix", raising=False)
     assert is_in_virtualenv() is True
+
+
+def test_is_in_virtualenv_with_real_prefix(monkeypatch) -> None:
+    # Older virtualenvs / uv set sys.real_prefix even when base_prefix matches
+    monkeypatch.setattr("sys.prefix", "/usr")
+    monkeypatch.setattr("sys.base_prefix", "/usr")
+    monkeypatch.setattr("sys.real_prefix", "/usr-real", raising=False)
+    assert is_in_virtualenv() is True
+
+
+def test_is_in_virtualenv_returns_false_on_system_python(monkeypatch) -> None:
+    # System Python: prefix == base_prefix, no real_prefix attribute.
+    # This is what GitHub Actions setup-python gives us in CI.
+    monkeypatch.setattr("sys.prefix", "/usr")
+    monkeypatch.setattr("sys.base_prefix", "/usr")
+    monkeypatch.delattr("sys.real_prefix", raising=False)
+    assert is_in_virtualenv() is False
 
 
 def test_externally_managed_marker_absent(monkeypatch) -> None:

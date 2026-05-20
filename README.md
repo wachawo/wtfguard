@@ -443,6 +443,16 @@ ruff check src tests
 mypy src
 ```
 
+The repo ships a `.githooks/pre-push` hook that runs the same three
+gates as CI. Enable it once per clone with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook expects a `.venv` in the repo root (override with
+`WTFGUARD_DEV_PY=/path/to/python`).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
