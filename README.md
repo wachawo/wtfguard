@@ -452,8 +452,11 @@ MIT. See [LICENSE](LICENSE).
 False positives, missed patterns, ideas, and language-port stubs (npm,
 cargo, gem, go mod) are all welcome. Open an issue first to coordinate.
 
-## Project document
+## Project documents
 
-The long-form project rationale, market analysis, roadmap, pricing model,
-and self-criticism live in [`PROJECT.md`](PROJECT.md). The README is the
-*what*; PROJECT.md is the *why*.
+- [`PROJECT.md`](PROJECT.md) — long-form rationale, market analysis,
+  pricing model, self-criticism. The *why*.
+- [`ROADMAP.md`](ROADMAP.md) — engineering punch list of what's not yet
+  built, grouped by phase and ranked by priority. The *what next*.
+- [`CHANGELOG.md`](CHANGELOG.md) — shipped features in Keep-a-Changelog
+  format. The *what already*.
