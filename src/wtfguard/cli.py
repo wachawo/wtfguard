@@ -20,6 +20,8 @@ from wtfguard import (
     allowlist,
     analyzer,
     concurrency,
+    config,
+    html_report,
     installed,
     llm,
     lockfile,
@@ -59,6 +61,8 @@ def main(ctx: click.Context, verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         stream=sys.stderr,
     )
+
+    config.apply_to_env(config.load())
 
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
@@ -135,6 +139,8 @@ def scan(
               help="Path to allowlist file (default: auto-discover .wtfguardignore / WTFGUARD_ALLOWLIST / ~/.wtfguard/allowlist.txt)")
 @click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
               help="Write SARIF 2.1.0 report to this path")
+@click.option("--html", "html_path", type=click.Path(path_type=Path), default=None,
+              help="Write standalone HTML report to this path")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_requirements(
@@ -143,6 +149,7 @@ def scan_requirements(
     no_cache: bool,
     allowlist_path: Path | None,
     sarif_path: Path | None,
+    html_path: Path | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -180,6 +187,8 @@ def scan_requirements(
             console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
     if sarif_path is not None:
         write_sarif(summary, sarif_path)
+    if html_path is not None:
+        write_html(summary, skipped, html_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -191,6 +200,8 @@ def scan_requirements(
 @click.option("--max-packages", type=int, default=0, help="Cap scan at N packages (0 = no cap)")
 @click.option("--sarif", "sarif_path", type=click.Path(path_type=Path), default=None,
               help="Write SARIF 2.1.0 report to this path")
+@click.option("--html", "html_path", type=click.Path(path_type=Path), default=None,
+              help="Write standalone HTML report to this path")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_installed(
@@ -200,6 +211,7 @@ def scan_installed(
     allowlist_path: Path | None,
     max_packages: int,
     sarif_path: Path | None,
+    html_path: Path | None,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -237,6 +249,8 @@ def scan_installed(
             console.print(f"[dim]allowlisted ({len(skipped)}):[/dim] {', '.join(skipped)}")
     if sarif_path is not None:
         write_sarif(summary, sarif_path)
+    if html_path is not None:
+        write_html(summary, skipped, html_path)
     sys.exit(2 if worst >= Severity.CRITICAL else 1 if worst >= Severity.HIGH else 0)
 
 
@@ -391,6 +405,12 @@ def write_sarif(verdicts: list[Verdict], path: Path) -> None:
     with path.open("w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, ensure_ascii=False)
     console.print(f"[green]SARIF report written:[/] {path}")
+
+
+def write_html(verdicts: list[Verdict], allowlisted: list[str], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(html_report.render(verdicts, allowlisted), encoding="utf-8")
+    console.print(f"[green]HTML report written:[/] {path}")
 
 
 def parse_package_spec(spec: str) -> tuple[str, str | None]:

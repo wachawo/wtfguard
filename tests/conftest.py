@@ -23,6 +23,20 @@ def isolate_llm_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("WTFGUARD_LLM_BACKEND", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def isolate_advisory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub OSV.dev lookups to empty by default so tests never hit the network."""
+    monkeypatch.setattr("wtfguard.advisory.lookup", lambda name, version, cache=None: [])
+
+
+@pytest.fixture(autouse=True)
+def isolate_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Pin config discovery to a tmp directory so an existing ~/.wtfguard/config.toml
+    on the developer's machine doesn't leak into tests."""
+    monkeypatch.setenv("WTFGUARD_CONFIG", str(tmp_path / "config-absent.toml"))
+    monkeypatch.setattr("wtfguard.config.DEFAULT_PATH", tmp_path / "default-absent.toml")
+
+
 @pytest.fixture
 def golden_dir() -> Path:
     return GOLDEN_DIR

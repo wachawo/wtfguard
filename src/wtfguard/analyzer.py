@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from wtfguard import diff, heuristics, llm, pypi
+from wtfguard import advisory, diff, heuristics, llm, pypi
 from wtfguard.cache import VerdictCache
 from wtfguard.models import Finding, Severity, Verdict
 
@@ -20,10 +20,11 @@ DEFAULT_HEURISTIC_CONFIDENCE = 0.9
 
 @dataclass
 class AnalysisOptions:
-    use_llm: bool = True
-    use_cache: bool = True
-    cache_path: Path | None = None
-    work_dir: Path | None = None
+    use_llm:      bool = True
+    use_cache:    bool = True
+    use_advisory: bool = True
+    cache_path:   Path | None = None
+    work_dir:     Path | None = None
 
 
 def analyze_package(
@@ -64,6 +65,8 @@ def analyze_snapshot(
     opts: AnalysisOptions,
 ) -> Verdict:
     findings = heuristics.scan_directory(root, rules)
+    if opts.use_advisory:
+        findings.extend(advisory.to_findings(advisory.lookup(name, version)))
     severity = heuristics.aggregate_severity(findings)
     confidence = DEFAULT_HEURISTIC_CONFIDENCE if findings else 1.0
 
@@ -117,6 +120,8 @@ def analyze_diff(
                 return cached
 
     findings = heuristics.scan_directory(new_root, rules)
+    if opts.use_advisory:
+        findings.extend(advisory.to_findings(advisory.lookup(name, new_version)))
     severity = heuristics.aggregate_severity(findings)
     confidence = DEFAULT_HEURISTIC_CONFIDENCE if findings else 1.0
     llm_explanation: str | None = None

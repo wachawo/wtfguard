@@ -59,3 +59,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asymmetry where only single `scan` had JSON output
 - `doctor` now shows the active backend, model, and Ollama URL
 - 227 tests, 95% line coverage
+- **OSV.dev advisory lookup** — new `wtfguard.advisory` module queries the
+  public OSV.dev API for known CVE/GHSA on every scanned (name, version).
+  Hits are surfaced as `KNOWN_ADVISORY` findings with severity derived from
+  CVSS score (>=9 critical, >=7 high, >=4 medium, >0 low). Results are
+  cached in `~/.wtfguard/advisory-cache.json` with 24h TTL.
+  `analyzer.AnalysisOptions.use_advisory` toggles the stage
+- **HTML report** (`--html <path>`) — standalone single-file HTML5 with
+  embedded CSS/JS, summary pill, drill-down findings per package. No
+  external assets — emails clean, opens offline
+- **TOML config file** — `wtfguard.toml` in cwd, `WTFGUARD_CONFIG` env, or
+  `~/.wtfguard/config.toml`. Sections `[scan]`, `[llm]`, `[allowlist]`.
+  Values project into env vars only if the env var is not already set
+  (env/CLI always win)
+- 274 tests, 95% line coverage

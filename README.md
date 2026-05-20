@@ -51,6 +51,10 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] Lockfile parsers: `poetry.lock`, `uv.lock`, `Pipfile.lock`, `requirements.in`
 - [x] `wtfguard verify` — re-check a cached verdict
 - [x] `--json` output on every scan command
+- [x] **OSV.dev advisory cross-check** — every scanned (name, version) is queried
+  against the OSV.dev database; CVE/GHSA hits surface as `KNOWN_ADVISORY` findings
+- [x] **HTML report** (`--html <path>`) — standalone single-file audit report
+- [x] **TOML config file** (`~/.wtfguard/config.toml` or `./wtfguard.toml`)
 
 Not yet done (Phase 2+):
 
@@ -170,25 +174,23 @@ with the package name+version. Every report tightens the rules.
 ## Architecture
 
 ```
-   ┌──────────────┐    ┌────────────┐    ┌──────────────┐
-   │  PyPI sdist  │───►│  Heuristics│───►│  LLM (opt.)  │
-   │   fetcher    │    │  regex+AST │    │  Claude API  │
-   └──────────────┘    └─────┬──────┘    └──────┬───────┘
-                             │                  │
-                             ▼                  ▼
-                       ┌─────────────────────────┐
-                       │   Severity combiner     │
-                       │   (confidence-floored)  │
-                       └────────────┬────────────┘
-                                    │
-                                    ▼
-                       ┌─────────────────────────┐
-                       │  SQLite verdict cache   │
-                       │  keyed by diff-hash     │
-                       └────────────┬────────────┘
-                                    │
-                                    ▼
-                              CLI verdict
+   ┌──────────────┐    ┌────────────┐    ┌──────────────┐    ┌──────────────┐
+   │  PyPI sdist  │───►│  Heuristics│───►│  OSV.dev DB  │───►│  LLM (opt.)  │
+   │   fetcher    │    │  regex+AST │    │  CVE / GHSA  │    │ Claude/Ollama│
+   └──────────────┘    └─────┬──────┘    └──────┬───────┘    └──────┬───────┘
+                             │                  │                   │
+                             ▼                  ▼                   ▼
+                       ┌─────────────────────────────────────────────────┐
+                       │   Severity combiner (confidence-floored)        │
+                       └────────────────────┬────────────────────────────┘
+                                            │
+                                            ▼
+                       ┌─────────────────────────────────────────────────┐
+                       │  SQLite verdict cache + JSON advisory cache     │
+                       └────────────────────┬────────────────────────────┘
+                                            │
+                                            ▼
+                              CLI verdict / JSON / SARIF / HTML
 ```
 
 - `wtfguard.pypi` — fetch and extract release archives
@@ -295,6 +297,28 @@ Emit SARIF and upload to GitHub Code Scanning:
 ```
 
 Full reference: [`examples/github-action.md`](examples/github-action.md).
+
+## Config file
+
+Skip retyping env vars by committing a `wtfguard.toml` at the repo root,
+or a personal `~/.wtfguard/config.toml`:
+
+```toml
+[scan]
+jobs = 8
+no_llm = false
+
+[llm]
+backend = "ollama"
+model = "qwen2.5-coder:32b"
+ollama_url = "http://gpu-host:11434"
+
+[allowlist]
+path = ".wtfguardignore"
+```
+
+Lookup order (first match wins): `WTFGUARD_CONFIG` env, `./wtfguard.toml`,
+`~/.wtfguard/config.toml`. Env vars and CLI flags always win over config.
 
 ## Development
 
