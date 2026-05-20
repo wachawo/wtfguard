@@ -92,6 +92,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **YAML policy file** (`--policy <path>`) — per-rule/per-package severity overrides
 - [x] **Webhook notification** (`--webhook <url>`) — Slack / Discord / generic JSON
 - [x] **`--offline` mode** — drop every network stage (LLM/advisory/metadata)
+- [x] **`wtfguard incident <package>`** — release+advisory forensic timeline
+- [x] **`wtfguard prefetch <reqs>`** — pre-download sdists for offline scans
+- [x] **`wtfguard policy-cli show / validate`** — inspect and lint a policy file
 
 Not yet done (Phase 2+):
 

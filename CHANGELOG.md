@@ -272,3 +272,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata). Heuristics, typosquat, and license_check keep running.
   Exposed as `--offline` on both batch scan commands
 - 643 tests, 92.79% line coverage
+- **`wtfguard incident <package>`** — forensic timeline interleaving
+  PyPI release dates with known OSV advisories. New module
+  `wtfguard.incident` builds chronologically-sorted events answering
+  "when did the vulnerable version ship, when was the CVE disclosed,
+  when did the fix arrive". Text and `--json` output
+- **`wtfguard prefetch <requirements>`** — pre-download every pinned
+  sdist into a target directory (default `~/.wtfguard/prefetch`) so a
+  later `--offline` scan has the cache it needs. Uses existing
+  `pypi.download_file` with SHA256 verification. Reports
+  succeeded / skipped / failed per spec
+- **`wtfguard policy-cli show / validate`** — companion commands for
+  the YAML policy file. `show` displays the loaded policy
+  (auto-discovers a file when none given). `validate` parses, lists
+  overrides, and flags unknown rule IDs that will never fire
+- 669 tests, 92.96% line coverage
