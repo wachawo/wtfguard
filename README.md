@@ -76,6 +76,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **Append-only audit log** — JSONL compliance trail at `~/.wtfguard/audit.log.jsonl`
 - [x] **Plugin entry-points** — third-party rule packs via `[project.entry-points."wtfguard.rules"]`
 - [x] **Unicode confusable typosquats** — Cyrillic/Greek homoglyph and dash-lookalike detection
+- [x] **`wtfguard bench --network`** — shadow-bench against top-N real PyPI packages
+- [x] **`wtfguard scan-dir <path>`** — pre-publish self-audit of a local source tree
+- [x] **`wtfguard audit-log show / prune`** — CLI on top of the audit-log file
 
 Not yet done (Phase 2+):
 

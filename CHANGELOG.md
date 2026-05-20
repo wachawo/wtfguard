@@ -190,3 +190,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Latin `requests`. Also normalises dash lookalikes (en-dash, em-dash,
   non-breaking hyphen) to ASCII `-`
 - 513 tests, 92.41% line coverage
+- **`wtfguard bench --network`** — shadow-bench against the top-N real
+  PyPI packages. Fetches the live top-PyPI list and runs heuristics-only
+  analysis (no LLM, no advisory, no metadata, no typosquat, no license —
+  pure static checks) on each. Reports flagged-high count and the
+  implicit FP-rate on assumed-legitimate populars. Exits 1 if any HIGH+
+  finding fires. `--top N` overrides the default 50
+- **`wtfguard scan-dir <path>`** — scan a local source tree without any
+  PyPI fetch. Same heuristic engine (regex + AST + pyproject.toml +
+  custom rules) but offline. Use as a pre-publish self-audit: catch
+  what wtfguard would catch on your own package before you upload
+- **`wtfguard audit-log` command group** — `show` lists recent
+  audit-log entries with `--limit / --severity / --command / --json`
+  filters; `prune --days N --yes` drops old entries
+- 541 tests, 92.74% line coverage
