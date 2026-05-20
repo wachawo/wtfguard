@@ -761,6 +761,71 @@ def test_audit_log_prune_declined(runner: CliRunner, isolated_home: Path) -> Non
     assert "aborted" in result.output
 
 
+def test_audit_log_stats_empty(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["audit-log", "stats"])
+    assert result.exit_code == 0
+    assert "total entries" in result.output
+
+
+def test_audit_log_stats_with_entries(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.models import Verdict
+    high = Verdict(package="bad", version="1.0", severity=Severity.HIGH, confidence=0.9)
+    low = Verdict(package="ok", version="1.0", severity=Severity.LOW, confidence=1.0)
+    with patch("wtfguard.analyzer.analyze_package", side_effect=[high, low]):
+        runner.invoke(cli.main, ["scan", "bad==1.0"])
+        runner.invoke(cli.main, ["scan", "ok==1.0"])
+
+    result = runner.invoke(cli.main, ["audit-log", "stats"])
+    assert result.exit_code == 0
+    assert "by severity" in result.output
+    assert "by command" in result.output
+
+
+def test_audit_log_stats_json(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["audit-log", "stats", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "total" in payload
+    assert "by_severity" in payload
+
+
+def test_refresh_popular_dry_run(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.bench.fetch_top_packages", return_value=["requests", "numpy"]):
+        result = runner.invoke(cli.main, ["refresh-popular", "--dry-run", "--top", "2"])
+    assert result.exit_code == 0
+    assert "requests" in result.output
+
+
+def test_refresh_popular_writes_file(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    target = tmp_path / "p.txt"
+    with patch("wtfguard.bench.fetch_top_packages", return_value=["requests", "numpy"]):
+        result = runner.invoke(cli.main, ["refresh-popular", "--output", str(target), "--top", "2"])
+    assert result.exit_code == 0
+    assert "wrote 2 names" in result.output
+    assert "requests" in target.read_text(encoding="utf-8")
+
+
+def test_refresh_popular_network_failure(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.bench.fetch_top_packages", return_value=[]):
+        result = runner.invoke(cli.main, ["refresh-popular"])
+    assert result.exit_code == 1
+    assert "could not fetch" in result.output
+
+
+def test_pre_commit_config_basic(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["pre-commit-config"])
+    assert result.exit_code == 0
+    assert "wtfguard-scan-dir" in result.output
+    assert "wtfguard-scan-requirements" not in result.output
+
+
+def test_pre_commit_config_with_requirements(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["pre-commit-config", "--include-requirements"])
+    assert result.exit_code == 0
+    assert "wtfguard-scan-dir" in result.output
+    assert "wtfguard-scan-requirements" in result.output
+
+
 def test_explain_known_rule(runner: CliRunner, isolated_home: Path) -> None:
     result = runner.invoke(cli.main, ["explain", "NET_IN_SETUP"])
     assert result.exit_code == 0

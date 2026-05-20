@@ -38,6 +38,7 @@ from wtfguard import (
     state,
     system_env,
     tips,
+    typosquat,
     verdict_diff,
     watch,
 )
@@ -677,6 +678,89 @@ def audit_log_prune(days: int, yes: bool) -> None:
         sys.exit(0)
     removed = audit_log.prune_older_than(days)
     console.print(f"removed {removed} entries")
+
+
+@audit_log_group.command(name="stats")
+@click.option("--json", "json_output", is_flag=True)
+def audit_log_stats(json_output: bool) -> None:
+    """Summarise the audit log: counts by severity and command."""
+    entries = audit_log.read_entries()
+    by_severity: dict[str, int] = {}
+    by_command:  dict[str, int] = {}
+    for entry in entries:
+        sev = str(entry.get("severity", "unknown"))
+        cmd = str(entry.get("command", "unknown"))
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+        by_command[cmd] = by_command.get(cmd, 0) + 1
+
+    if json_output:
+        print(json.dumps({
+            "total":       len(entries),
+            "by_severity": by_severity,
+            "by_command":  by_command,
+        }, indent=2, ensure_ascii=False, sort_keys=True))
+        return
+
+    console.print(f"[bold]total entries:[/] {len(entries)}")
+    if by_severity:
+        console.print("\n[bold]by severity:[/]")
+        for sev in ("critical", "high", "medium", "low", "clean"):
+            if sev in by_severity:
+                color = SEVERITY_COLOR.get(Severity.from_name(sev), "white")
+                console.print(f"  [{color}]{sev:9}[/] {by_severity[sev]}")
+    if by_command:
+        console.print("\n[bold]by command:[/]")
+        for cmd, n in sorted(by_command.items(), key=lambda x: -x[1]):
+            console.print(f"  {cmd:20} {n}")
+
+
+@main.command(name="refresh-popular")
+@click.option("--top", type=int, default=500, help="Number of names to keep (default 500)")
+@click.option("--output", "output_path", type=click.Path(path_type=Path), default=None,
+              help="Write to a custom file (default: bundled data/popular_pypi.txt)")
+@click.option("--dry-run", is_flag=True, help="Print the would-be list without writing")
+def refresh_popular_cmd(top: int, output_path: Path | None, dry_run: bool) -> None:
+    """Refresh the typosquat-detection popular-packages list from PyPI download stats."""
+    names = bench.fetch_top_packages(top)
+    if not names:
+        console.print("[red]error:[/] could not fetch top-PyPI list from the network")
+        sys.exit(1)
+
+    if dry_run:
+        print("\n".join(names))
+        return
+
+    count = typosquat.write_popular(names, output_path)
+    target = output_path or typosquat.POPULAR_PATH
+    console.print(f"[green]wrote[/] {count} names to {target}")
+
+
+@main.command(name="pre-commit-config")
+@click.option("--include-requirements", is_flag=True,
+              help="Include a scan-requirements hook as well")
+def pre_commit_config_cmd(include_requirements: bool) -> None:
+    """Print a `.pre-commit-config.yaml` snippet you can paste into your repo."""
+    base = (
+        "repos:\n"
+        "  - repo: https://github.com/wachawo/wtfguard\n"
+        "    rev: main           # pin to a tag or SHA in production\n"
+        "    hooks:\n"
+        "      - id: wtfguard-scan-dir\n"
+        "        name: wtfguard pre-publish self-scan\n"
+        "        entry: wtfguard scan-dir src\n"
+        "        language: system\n"
+        "        pass_filenames: false\n"
+    )
+    if include_requirements:
+        base += (
+            "      - id: wtfguard-scan-requirements\n"
+            "        name: wtfguard requirements scan\n"
+            "        entry: wtfguard scan-requirements requirements.txt --no-llm\n"
+            "        language: system\n"
+            "        pass_filenames: false\n"
+            "        files: ^requirements\\.txt$\n"
+        )
+    print(base.rstrip())
 
 
 @main.command(name="rules")

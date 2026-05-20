@@ -93,6 +93,34 @@ def load_popular(path: Path | None = None) -> frozenset[str]:
     return frozenset(out)
 
 
+def write_popular(names: list[str], path: Path | None = None) -> int:
+    """Write `names` to the popular list, preserving the comment header. Returns count written.
+
+    Names are deduplicated via PEP 503 normalisation and sorted. Existing
+    content is replaced atomically — the caller is responsible for
+    keeping a backup if needed.
+    """
+    target = path or POPULAR_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    cleaned: set[str] = set()
+    for raw in names:
+        if not isinstance(raw, str):
+            continue
+        canon = normalize_name(raw)
+        if canon:
+            cleaned.add(canon)
+
+    header = (
+        "# Curated list of high-traffic PyPI packages used for typosquat\n"
+        "# detection. Names are PEP 503-normalized.\n"
+        "# Refresh with `wtfguard refresh-popular`.\n"
+    )
+    body = "\n".join(sorted(cleaned))
+    target.write_text(header + body + "\n", encoding="utf-8")
+    return len(cleaned)
+
+
 def levenshtein(a: str, b: str) -> int:
     """Compute Levenshtein edit distance between two strings."""
     if a == b:

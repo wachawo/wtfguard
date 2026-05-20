@@ -1,0 +1,26 @@
+- id: wtfguard-scan-dir
+  name: wtfguard pre-publish self-scan
+  description: Run wtfguard heuristic engine against the local source tree.
+  entry: wtfguard scan-dir
+  language: python
+  language_version: python3
+  pass_filenames: false
+  always_run: true
+
+- id: wtfguard-scan-requirements
+  name: wtfguard requirements scan
+  description: Audit pinned dependencies in a requirements file before commit.
+  entry: wtfguard scan-requirements
+  language: python
+  language_version: python3
+  pass_filenames: true
+  files: '(^requirements.*\.txt$|^poetry\.lock$|^uv\.lock$|^Pipfile\.lock$)'
+
+- id: wtfguard-verify-baseline
+  name: wtfguard verify baseline
+  description: Re-scan the same packages as a saved baseline and fail on drift.
+  entry: wtfguard verify-baseline
+  language: python
+  language_version: python3
+  pass_filenames: false
+  always_run: true

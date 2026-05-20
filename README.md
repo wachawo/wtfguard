@@ -78,7 +78,10 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **Unicode confusable typosquats** — Cyrillic/Greek homoglyph and dash-lookalike detection
 - [x] **`wtfguard bench --network`** — shadow-bench against top-N real PyPI packages
 - [x] **`wtfguard scan-dir <path>`** — pre-publish self-audit of a local source tree
-- [x] **`wtfguard audit-log show / prune`** — CLI on top of the audit-log file
+- [x] **`wtfguard audit-log show / prune / stats`** — CLI on top of the audit-log file
+- [x] **`wtfguard refresh-popular`** — auto-refresh the typosquat list from live PyPI stats
+- [x] **`wtfguard pre-commit-config`** — generate a starter `.pre-commit-config.yaml`
+- [x] **Native pre-commit hooks** — bundled `.pre-commit-hooks.yaml` for one-line install
 
 Not yet done (Phase 2+):
 

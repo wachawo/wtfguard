@@ -204,3 +204,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit-log entries with `--limit / --severity / --command / --json`
   filters; `prune --days N --yes` drops old entries
 - 541 tests, 92.74% line coverage
+- **`wtfguard refresh-popular`** — re-fetch the top-N PyPI list and
+  rewrite the bundled typosquat dictionary. `--top N` (default 500),
+  `--output <path>` for custom target, `--dry-run` to preview. Uses
+  the same upstream as `bench --network`
+- **`wtfguard audit-log stats`** — summary view of the audit log:
+  total entries and distribution by severity and command. `--json` for
+  machine consumption
+- **`wtfguard pre-commit-config`** — print a starter
+  `.pre-commit-config.yaml` snippet. `--include-requirements` also
+  wires up the `scan-requirements` hook
+- **Bundled `.pre-commit-hooks.yaml`** — repo now ships native
+  pre-commit hook definitions (`wtfguard-scan-dir`,
+  `wtfguard-scan-requirements`, `wtfguard-verify-baseline`) so users
+  can add wtfguard via a one-line `pre-commit-config.yaml` referencing
+  this repository
+- 555 tests, 92.88% line coverage
