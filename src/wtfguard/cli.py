@@ -38,7 +38,10 @@ from wtfguard import (
     prefetch,
     pypi_signals,
     sarif,
+    sbom_merge,
     scan_dir,
+    schemas,
+    self_test,
     state,
     system_env,
     threats,
@@ -808,6 +811,51 @@ def config_show(json_output: bool) -> None:
         for k, v in env_section.items():
             marker = "[green]set[/]" if v is not None else "[dim]unset[/]"
             console.print(f"  {k:28} {marker}  {v if v is not None else ''}")
+
+
+@main.command(name="self-test")
+@click.option("--json", "json_output", is_flag=True)
+def self_test_cmd(json_output: bool) -> None:
+    """Sanity-check the wtfguard installation. Exits 1 on any failure."""
+    report = self_test.run_all()
+    if json_output:
+        print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(self_test.format_text(report))
+    sys.exit(0 if report.fails == 0 else 1)
+
+
+@main.command(name="sbom-merge")
+@click.argument("inputs", nargs=-1, type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
+@click.option("--output", "output_path", type=click.Path(path_type=Path), required=True,
+              help="Where to write the merged CycloneDX 1.5 JSON")
+def sbom_merge_cmd(inputs: tuple[Path, ...], output_path: Path) -> None:
+    """Merge multiple CycloneDX 1.5 SBOMs into one.
+
+    Components are deduplicated by `bom-ref` / `purl` / `name`,
+    vulnerabilities by `id`. The resulting SBOM gets a fresh
+    serialNumber and timestamp.
+    """
+    merged = sbom_merge.merge(list(inputs))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as fh:
+        json.dump(merged, fh, indent=2, ensure_ascii=False)
+    console.print(
+        f"[green]merged[/] {len(inputs)} SBOM file(s) → {output_path} "
+        f"({len(merged.get('components') or [])} components, "
+        f"{len(merged.get('vulnerabilities') or [])} vulnerabilities)"
+    )
+
+
+@main.command(name="schema")
+@click.argument("name", type=click.Choice(schemas.NAMES))
+def schema_cmd(name: str) -> None:
+    """Print the JSON Schema (or external reference) for a wtfguard output format.
+
+    Useful for wiring tooling validators against `wtfguard scan --json`,
+    `scan-requirements --json`, SARIF, or CycloneDX.
+    """
+    print(json.dumps(schemas.get_schema(name), indent=2, ensure_ascii=False, sort_keys=True))
 
 
 @main.command(name="threats")

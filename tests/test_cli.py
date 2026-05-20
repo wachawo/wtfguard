@@ -1097,6 +1097,60 @@ def test_scan_requirements_min_severity_filters(runner: CliRunner, isolated_home
     assert result.exit_code == 0
 
 
+def test_self_test_pass(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["self-test"])
+    # In a clean test env LLM backend is unreachable → warn but no fails
+    assert result.exit_code == 0
+    assert "self-test" in result.output
+
+
+def test_self_test_json(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["self-test", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "checks" in payload
+    assert isinstance(payload["passes"], int)
+
+
+def test_sbom_merge_basic(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.write_text(json.dumps({
+        "bomFormat": "CycloneDX", "specVersion": "1.5",
+        "components": [{"bom-ref": "x", "name": "x"}],
+    }), encoding="utf-8")
+    b.write_text(json.dumps({
+        "bomFormat": "CycloneDX", "specVersion": "1.5",
+        "components": [{"bom-ref": "y", "name": "y"}],
+    }), encoding="utf-8")
+
+    output = tmp_path / "merged.json"
+    result = runner.invoke(cli.main, ["sbom-merge", str(a), str(b), "--output", str(output)])
+    assert result.exit_code == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert len(payload["components"]) == 2
+
+
+def test_schema_verdict(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["schema", "verdict"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "properties" in payload
+    assert "severity" in payload["properties"]
+
+
+def test_schema_external(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["schema", "sarif"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "$ref" in payload
+
+
+def test_schema_unknown_format(runner: CliRunner, isolated_home: Path) -> None:
+    result = runner.invoke(cli.main, ["schema", "not-real"])
+    assert result.exit_code != 0  # click rejects invalid choice
+
+
 def test_policy_cli_validate_empty(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
     f = tmp_path / "policy.yaml"
     f.write_text("overrides: []\n", encoding="utf-8")
