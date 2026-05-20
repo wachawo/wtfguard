@@ -34,9 +34,13 @@ from wtfguard import (
     pypi_signals,
     sarif,
     state,
+    system_env,
     tips,
     verdict_diff,
     watch,
+)
+from wtfguard import (
+    baseline as baseline_mod,
 )
 from wtfguard.cache import VerdictCache
 from wtfguard.models import Severity, Verdict
@@ -316,6 +320,60 @@ def tip() -> None:
     """Print one random security tip."""
     t = tips.random_tip()
     console.print(Panel(t.text, title=f"[bold]{t.level}[/bold]", border_style="cyan"))
+
+
+@main.command(name="verify-baseline")
+@click.argument("baseline_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--no-llm", is_flag=True)
+@click.option("--no-cache", is_flag=True)
+@click.option("--json", "json_output", is_flag=True, help="Emit diff as JSON")
+@click.option("--jobs", "-j", type=int, default=4)
+def verify_baseline_cmd(
+    baseline_file: Path,
+    no_llm: bool,
+    no_cache: bool,
+    json_output: bool,
+    jobs: int,
+) -> None:
+    """Re-scan the same packages as a saved baseline and fail on drift.
+
+    The baseline is the JSON output of an earlier `scan-requirements --json`
+    or `scan-installed --json`. Useful as a CI gate: pin a clean state,
+    then fail the PR build if any new finding appears.
+    """
+    try:
+        baseline_payload = baseline_mod.load_baseline(baseline_file)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]error:[/] {type(exc).__name__}: {exc}")
+        sys.exit(2)
+
+    specs = baseline_mod.extract_specs(baseline_payload)
+    if not specs:
+        console.print("[yellow]baseline contains no scannable specs[/]")
+        sys.exit(0)
+
+    options = analyzer.AnalysisOptions(use_llm=not no_llm, use_cache=not no_cache)
+    summary, worst = run_scan_batch(specs, options, jobs, json_mode=True)
+    fresh_payload = baseline_mod.verdicts_to_payload(summary, worst.label())
+
+    result = verdict_diff.diff(baseline_payload, fresh_payload)
+
+    if json_output:
+        payload = {
+            "worst_before": result.worst_before.label(),
+            "worst_after":  result.worst_after.label(),
+            "added":        [vars(r) for r in result.added],
+            "removed":      [vars(r) for r in result.removed],
+            "severity_changed": [
+                {"before": vars(a), "after": vars(b)}
+                for a, b in result.severity_changed
+            ],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(verdict_diff.format_text(result))
+
+    sys.exit(0 if result.is_empty() else 1)
 
 
 @main.command(name="diff")
@@ -599,6 +657,11 @@ def pip_cmd(
     pip_argv: list[str] = list(ctx.args)
     parsed = pip_wrapper.parse_pip_args(pip_argv)
 
+    env_report = system_env.inspect()
+    warning = env_report.warning_text()
+    if warning:
+        console.print(f"[yellow]warning:[/] {warning}")
+
     if pip_wrapper.should_skip_scan(parsed):
         sys.exit(pip_wrapper.delegate_to_pip(pip_argv))
 
@@ -636,9 +699,18 @@ def doctor() -> None:
     """Show config: cache path, state path, LLM availability."""
     backend = llm.active_backend()
     requested = llm.configured_backend()
+    env_report = system_env.inspect()
+
     console.print(f"version:        [bold]{__version__}[/bold]")
     console.print("cache:          ~/.wtfguard/cache.sqlite")
     console.print("state:          ~/.wtfguard/state.json")
+    console.print(f"python:         {env_report.python_executable}")
+    console.print(f"virtualenv:     {'yes' if env_report.is_virtualenv else 'no'}")
+    if env_report.is_externally_managed:
+        marker_color = "green" if env_report.is_virtualenv else "red"
+        console.print(f"PEP 668:        [{marker_color}]externally-managed (marker: {env_report.marker_path})[/]")
+    else:
+        console.print("PEP 668:        not externally-managed")
     console.print(f"backend (env):  {requested or '(autodetect)'}")
     color = "green" if backend else "yellow"
     console.print(f"backend (live): [{color}]{backend or 'none'}[/]")
@@ -649,6 +721,10 @@ def doctor() -> None:
         console.print(f"ollama-url:     {llm.ollama_url()}")
     else:
         console.print("model:          [dim](no backend reachable)[/]")
+
+    warning = env_report.warning_text()
+    if warning:
+        console.print(f"\n[yellow]warning:[/] {warning}")
 
 
 @main.command()

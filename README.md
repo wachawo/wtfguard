@@ -70,6 +70,9 @@ Phase 1 deliverables shipped in this snapshot:
 - [x] **`wtfguard watch <file>`** — file-watching dev loop
 - [x] **CycloneDX 1.5 SBOM output** (`--cyclonedx <path>`) — Dependency-Track / SBOM-friendly
 - [x] **`wtfguard diff <a.json> <b.json>`** — upgrade-audit diff between two scans
+- [x] **License compliance check** — sixth detection axis, allowlist-based
+- [x] **`wtfguard verify-baseline <baseline.json>`** — CI gate against pinned scan
+- [x] **PEP 668 externally-managed detection** — surfaced in `doctor` and `pip` flows
 
 Not yet done (Phase 2+):
 

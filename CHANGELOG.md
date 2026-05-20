@@ -154,3 +154,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   findings, severity changes, and worst-severity delta. Exits 1 on any
   change, useful for upgrade-audit CI gates. `--json` for tooling
 - 449 tests, 93.35% line coverage
+- **License compliance check** — sixth detection axis. Reads
+  `info.license` and `License ::`-style classifiers from PyPI metadata,
+  matches against a default permissive allowlist (MIT, Apache-2.0, BSD-*,
+  ISC, MPL-2.0, ...). Non-allowed licenses fire `LICENSE_INCOMPATIBLE`
+  (medium). Missing license fires `LICENSE_UNKNOWN` (low). Multi-license
+  expressions (`MIT OR Apache-2.0`) pass if any side is allowed.
+  Toggleable via `AnalysisOptions.use_license_check` and the
+  `allowed_licenses` override
+- **`wtfguard verify-baseline <baseline.json>`** — re-scan the same
+  packages a baseline JSON pinned, diff against it, exit 1 on any
+  drift. Workflow: commit a clean baseline to the repo, CI fails the
+  PR build when a finding appears or severity changes. `--json` for
+  machine output
+- **PEP 668 system-managed environment detection** — new
+  `wtfguard.system_env` checks for `EXTERNALLY-MANAGED` marker.
+  `wtfguard doctor` surfaces virtualenv status and warns when running
+  against a system Python that pip would refuse to write into.
+  `wtfguard pip install` flow prints the same warning before delegating
+- 482 tests, 92.57% line coverage

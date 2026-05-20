@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from wtfguard import advisory, diff, heuristics, llm, pypi, pypi_signals, typosquat
+from wtfguard import advisory, diff, heuristics, license_check, llm, pypi, pypi_signals, typosquat
 from wtfguard.cache import VerdictCache
 from wtfguard.models import Finding, Severity, Verdict
 
@@ -20,14 +20,16 @@ DEFAULT_HEURISTIC_CONFIDENCE = 0.9
 
 @dataclass
 class AnalysisOptions:
-    use_llm:        bool = True
-    use_cache:      bool = True
-    use_advisory:   bool = True
-    use_metadata:   bool = True
-    use_typosquat:  bool = True
-    cache_path:     Path | None = None
-    work_dir:       Path | None = None
-    extra_rules:    list[Path] | None = None
+    use_llm:           bool = True
+    use_cache:         bool = True
+    use_advisory:      bool = True
+    use_metadata:      bool = True
+    use_typosquat:     bool = True
+    use_license_check: bool = True
+    cache_path:        Path | None = None
+    work_dir:          Path | None = None
+    extra_rules:       list[Path] | None = None
+    allowed_licenses:  list[str] | None = None
 
 
 def analyze_package(
@@ -74,6 +76,8 @@ def analyze_snapshot(
         findings.extend(pypi_signals.signals_for(name))
     if opts.use_typosquat:
         findings.extend(typosquat.check(name))
+    if opts.use_license_check:
+        findings.extend(license_findings(name))
     severity = heuristics.aggregate_severity(findings)
     confidence = DEFAULT_HEURISTIC_CONFIDENCE if findings else 1.0
 
@@ -133,6 +137,8 @@ def analyze_diff(
         findings.extend(pypi_signals.signals_for(name))
     if opts.use_typosquat:
         findings.extend(typosquat.check(name))
+    if opts.use_license_check:
+        findings.extend(license_findings(name))
     severity = heuristics.aggregate_severity(findings)
     confidence = DEFAULT_HEURISTIC_CONFIDENCE if findings else 1.0
     llm_explanation: str | None = None
@@ -179,6 +185,17 @@ def combine_severity(
     final_sev = Severity(max(int(heur_sev), int(llm_sev)))
     final_conf = max(heur_conf, llm_conf) if heur_sev == llm_sev else min(heur_conf, llm_conf)
     return final_sev, final_conf
+
+
+def license_findings(name: str) -> list[Finding]:
+    """Fetch raw PyPI info for `name` and run the license check. Empty on network failure."""
+    raw = pypi_signals.pull_pypi_metadata(name)
+    if raw is None:
+        return []
+    info = raw.get("info")
+    if not isinstance(info, dict):
+        return []
+    return license_check.check(name, info)
 
 
 def render_snapshot_for_llm(root: Path, findings: list[Finding]) -> str:
