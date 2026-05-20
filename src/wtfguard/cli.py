@@ -41,6 +41,7 @@ from wtfguard import (
     scan_dir,
     state,
     system_env,
+    threats,
     tips,
     typosquat,
     verdict_diff,
@@ -172,6 +173,9 @@ def scan(
               help="Write CycloneDX 1.5 SBOM JSON")
 @click.option("--webhook", "webhook_url", default=None,
               help="POST a scan summary to this Slack/Discord/generic webhook URL")
+@click.option("--min-severity", "min_severity_str",
+              type=click.Choice(["clean", "low", "medium", "high", "critical"]),
+              default="clean", help="Drop verdicts below this severity from output + exit-code")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_requirements(
@@ -186,6 +190,7 @@ def scan_requirements(
     markdown_path: Path | None,
     cyclonedx_path: Path | None,
     webhook_url: str | None,
+    min_severity_str: str,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -215,6 +220,11 @@ def scan_requirements(
 
     summary, worst = run_scan_batch(to_scan, options, jobs, json_mode=json_output,
                                     audit_command="scan-requirements", active_policy=active_policy)
+
+    threshold = Severity.from_name(min_severity_str)
+    if threshold > Severity.CLEAN:
+        summary = [v for v in summary if v.severity >= threshold]
+        worst = Severity(max((int(v.severity) for v in summary), default=int(Severity.CLEAN)))
 
     if json_output:
         emit_batch_json(summary, skipped, worst)
@@ -259,6 +269,9 @@ def scan_requirements(
               help="Write CycloneDX 1.5 SBOM JSON")
 @click.option("--webhook", "webhook_url", default=None,
               help="POST a scan summary to this Slack/Discord/generic webhook URL")
+@click.option("--min-severity", "min_severity_str",
+              type=click.Choice(["clean", "low", "medium", "high", "critical"]),
+              default="clean", help="Drop verdicts below this severity from output + exit-code")
 @click.option("--json", "json_output", is_flag=True, help="Emit verdicts as a JSON array")
 @click.option("--jobs", "-j", type=int, default=4, help="Concurrent scan workers (default 4)")
 def scan_installed(
@@ -274,6 +287,7 @@ def scan_installed(
     markdown_path: Path | None,
     cyclonedx_path: Path | None,
     webhook_url: str | None,
+    min_severity_str: str,
     json_output: bool,
     jobs: int,
 ) -> None:
@@ -304,6 +318,11 @@ def scan_installed(
     summary, worst = run_scan_batch(to_scan, options, jobs, only_show_above=Severity.MEDIUM,
                                     json_mode=json_output, audit_command="scan-installed",
                                     active_policy=active_policy)
+
+    threshold = Severity.from_name(min_severity_str)
+    if threshold > Severity.CLEAN:
+        summary = [v for v in summary if v.severity >= threshold]
+        worst = Severity(max((int(v.severity) for v in summary), default=int(Severity.CLEAN)))
 
     if json_output:
         emit_batch_json(summary, skipped, worst)
@@ -791,6 +810,71 @@ def config_show(json_output: bool) -> None:
             console.print(f"  {k:28} {marker}  {v if v is not None else ''}")
 
 
+@main.command(name="threats")
+@click.option("--since", "since_str", default="30d",
+              help="Only advisories for installed packages within this window (e.g. 7d, 24h, 2w)")
+@click.option("--include-stdlib", is_flag=True, help="Include bootstrap packages (pip, setuptools, ...)")
+@click.option("--min-severity", "min_severity",
+              type=click.Choice(["clean", "low", "medium", "high", "critical"]),
+              default="low", help="Hide threats below this severity")
+@click.option("--json", "json_output", is_flag=True)
+def threats_cmd(since_str: str, include_stdlib: bool, min_severity: str, json_output: bool) -> None:
+    """List recent OSV advisories for every installed package.
+
+    Combines `wtfguard scan-installed`'s discovery with the OSV.dev batch
+    endpoint, producing a focused threat-intel report.
+    """
+    since = threats.parse_since(since_str)
+    report = threats.scan_installed(since=since, include_stdlib=include_stdlib)
+
+    threshold = Severity.from_name(min_severity)
+    report.threats = [t for t in report.threats if t.severity >= threshold]
+
+    if json_output:
+        payload = {
+            "scanned_count": report.scanned_count,
+            "since":         since_str,
+            "min_severity":  min_severity,
+            "threats": [
+                {
+                    "package":     t.package,
+                    "version":     t.version,
+                    "advisory_id": t.advisory_id,
+                    "severity":    t.severity.label(),
+                    "summary":     t.summary,
+                }
+                for t in report.threats
+            ],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(threats.format_text(report))
+    sys.exit(0 if not report.threats else 1)
+
+
+POLICY_STARTER = """\
+# wtfguard policy — severity overrides per rule and per package.
+# Lookup chain: WTFGUARD_POLICY env, ./wtfguard-policy.yaml, no file.
+
+overrides:
+  # Downgrade NET_IN_SETUP for one internal package that legitimately
+  # phones home for telemetry.
+  # - rule: NET_IN_SETUP
+  #   packages: [acme-internal]
+  #   severity: low
+
+  # Drop the LICENSE_INCOMPATIBLE finding entirely — your legal team
+  # already cleared this category.
+  # - rule: LICENSE_INCOMPATIBLE
+  #   severity: ignore
+
+  # Raise BRAND_NEW_PACKAGE to high — your shop refuses to install
+  # anything published within the last 30 days, full stop.
+  # - rule: BRAND_NEW_PACKAGE
+  #   severity: high
+"""
+
+
 @main.command(name="incident")
 @click.argument("package_name")
 @click.option("--json", "json_output", is_flag=True)
@@ -892,6 +976,20 @@ def policy_validate(policy_file: Path) -> None:
         console.print("[dim]these overrides will never fire because the rules do not exist[/]")
         sys.exit(1)
     console.print("[green]policy is valid — all rule ids are known[/]")
+
+
+@policy_group.command(name="init")
+@click.option("--output", "output_path", type=click.Path(path_type=Path), default=None,
+              help="Target file (default: ./wtfguard-policy.yaml)")
+@click.option("--force", is_flag=True, help="Overwrite an existing file")
+def policy_init(output_path: Path | None, force: bool) -> None:
+    """Generate a starter `wtfguard-policy.yaml` with commented examples."""
+    target = output_path or Path("wtfguard-policy.yaml")
+    if target.exists() and not force:
+        console.print(f"[yellow]skipped (exists):[/] {target} — use --force to overwrite")
+        return
+    target.write_text(POLICY_STARTER, encoding="utf-8")
+    console.print(f"[green]wrote[/] {target}")
 
 
 @main.group(name="audit-log")

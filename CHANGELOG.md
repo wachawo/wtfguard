@@ -287,3 +287,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (auto-discovers a file when none given). `validate` parses, lists
   overrides, and flags unknown rule IDs that will never fire
 - 669 tests, 92.96% line coverage
+- **`wtfguard threats`** — proactive threat-intel scan. Walks every
+  installed package, queries OSV.dev in batch, and prints any known
+  advisories with severity, advisory id, and summary. `--since 7d|24h|2w`
+  windowing, `--min-severity` filter, `--include-stdlib`, `--json`.
+  Exits 1 if any threat is found
+- **`--min-severity LEVEL`** on `scan-requirements` and `scan-installed`
+  — drops verdicts below the threshold from both human output and
+  exit-code computation. Useful pairing with policy file overrides
+- **`wtfguard policy-cli init`** — scaffolds a starter
+  `wtfguard-policy.yaml` with commented examples (downgrade
+  `NET_IN_SETUP` for an internal package, drop `LICENSE_INCOMPATIBLE`,
+  raise `BRAND_NEW_PACKAGE`). `--force` to overwrite, `--output` for
+  custom target
+- 688 tests, 93.08% line coverage

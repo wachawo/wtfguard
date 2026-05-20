@@ -1014,6 +1014,89 @@ def test_policy_cli_validate_known_rule(runner: CliRunner, isolated_home: Path, 
     assert "policy is valid" in result.output
 
 
+def test_threats_no_advisories(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.installed import InstalledPackage
+    pkgs = [InstalledPackage(name="requests", version="2.32.0")]
+    with patch("wtfguard.threats.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.threats.advisory.lookup_batch", return_value={"requests==2.32.0": []}):
+        result = runner.invoke(cli.main, ["threats"])
+    assert result.exit_code == 0
+    assert "no known advisories" in result.output
+
+
+def test_threats_with_advisory(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.advisory import Advisory
+    from wtfguard.installed import InstalledPackage
+    pkgs = [InstalledPackage(name="requests", version="2.32.0")]
+    advs = {"requests==2.32.0": [
+        Advisory(id="GHSA-x", summary="rce", severity=Severity.HIGH, cvss_score=8.0),
+    ]}
+    with patch("wtfguard.threats.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.threats.advisory.lookup_batch", return_value=advs):
+        result = runner.invoke(cli.main, ["threats"])
+    assert result.exit_code == 1
+    assert "GHSA-x" in result.output
+
+
+def test_threats_min_severity_filter(runner: CliRunner, isolated_home: Path) -> None:
+    from wtfguard.advisory import Advisory
+    from wtfguard.installed import InstalledPackage
+    pkgs = [InstalledPackage(name="x", version="1.0")]
+    advs = {"x==1.0": [Advisory(id="GHSA-low", summary="", severity=Severity.LOW, cvss_score=2.0)]}
+    with patch("wtfguard.threats.installed.list_installed", return_value=pkgs), \
+         patch("wtfguard.threats.advisory.lookup_batch", return_value=advs):
+        result = runner.invoke(cli.main, ["threats", "--min-severity", "high"])
+    assert result.exit_code == 0
+    assert "no known advisories" in result.output
+
+
+def test_threats_json(runner: CliRunner, isolated_home: Path) -> None:
+    with patch("wtfguard.threats.installed.list_installed", return_value=[]):
+        result = runner.invoke(cli.main, ["threats", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert "threats" in payload
+
+
+def test_policy_cli_init(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    target = tmp_path / "policy.yaml"
+    result = runner.invoke(cli.main, ["policy-cli", "init", "--output", str(target)])
+    assert result.exit_code == 0
+    assert "wrote" in result.output
+    assert target.is_file()
+    content = target.read_text(encoding="utf-8")
+    assert "overrides:" in content
+
+
+def test_policy_cli_init_skips_existing(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    target = tmp_path / "policy.yaml"
+    target.write_text("# already here\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["policy-cli", "init", "--output", str(target)])
+    assert result.exit_code == 0
+    assert "skipped" in result.output
+
+
+def test_policy_cli_init_force(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    target = tmp_path / "policy.yaml"
+    target.write_text("# old\n", encoding="utf-8")
+    result = runner.invoke(cli.main, ["policy-cli", "init", "--output", str(target), "--force"])
+    assert result.exit_code == 0
+    assert "overrides:" in target.read_text(encoding="utf-8")
+
+
+def test_scan_requirements_min_severity_filters(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
+    req = tmp_path / "req.txt"
+    req.write_text("foo==1.0\n", encoding="utf-8")
+
+    def fake_analyze(name, version, base, options):
+        return make_verdict(Severity.LOW)  # low severity
+
+    with patch("wtfguard.analyzer.analyze_package", side_effect=fake_analyze):
+        # With min-severity high, LOW gets filtered out → exit 0
+        result = runner.invoke(cli.main, ["scan-requirements", str(req), "--min-severity", "high"])
+    assert result.exit_code == 0
+
+
 def test_policy_cli_validate_empty(runner: CliRunner, isolated_home: Path, tmp_path: Path) -> None:
     f = tmp_path / "policy.yaml"
     f.write_text("overrides: []\n", encoding="utf-8")
